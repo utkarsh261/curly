@@ -283,7 +283,7 @@ struct JSONEditorPanel: View {
                 isEditable: isEditable,
                 accessibilityIdentifier: accessibilityIdentifier
             )
-            .frame(minHeight: minHeight)
+            .frame(minHeight: minHeight, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)

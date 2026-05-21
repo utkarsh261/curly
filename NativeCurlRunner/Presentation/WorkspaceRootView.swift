@@ -83,63 +83,66 @@ struct WorkspaceRootView: View {
     }
 
     private var requestPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                paneTitle(
-                    title: "Request",
-                    subtitle: "Compose a REST request from a URL or pasted cURL command."
-                )
-
-                RequestComposerView(
-                    method: methodBinding,
-                    url: urlBinding,
-                    isURLFieldFocused: $isURLFieldFocused,
-                    canRun: coordinator.state.canRun,
-                    onPaste: handleURLBarPaste,
-                    onRun: coordinator.runCurrentRequest
-                )
-
-                if let requestIssueMessage = coordinator.state.requestIssueMessage {
-                    InlineMessageCard(
-                        title: coordinator.state.requestIssueSeverity == .warning ? "Request Warning" : "Request Issue",
-                        message: requestIssueMessage,
-                        severity: coordinator.state.requestIssueSeverity
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    paneTitle(
+                        title: "Request",
+                        subtitle: "Compose a REST request from a URL or pasted cURL command."
                     )
-                }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Text("Headers")
-                                .font(.headline)
-                            Spacer()
-                            Button("Add Header") {
-                                coordinator.addHeader()
+                    RequestComposerView(
+                        method: methodBinding,
+                        url: urlBinding,
+                        isURLFieldFocused: $isURLFieldFocused,
+                        canRun: coordinator.state.canRun,
+                        onPaste: handleURLBarPaste,
+                        onRun: coordinator.runCurrentRequest
+                    )
+
+                    if let requestIssueMessage = coordinator.state.requestIssueMessage {
+                        InlineMessageCard(
+                            title: coordinator.state.requestIssueSeverity == .warning ? "Request Warning" : "Request Issue",
+                            message: requestIssueMessage,
+                            severity: coordinator.state.requestIssueSeverity
+                        )
+                    }
+
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 14) {
+                            HStack {
+                                Text("Headers")
+                                    .font(.headline)
+                                Spacer()
+                                Button("Add Header") {
+                                    coordinator.addHeader()
+                                }
+                                .buttonStyle(.bordered)
                             }
-                            .buttonStyle(.bordered)
-                        }
 
-                        if coordinator.state.workspaceRequest.headers.isEmpty {
-                            EmptySectionHint(
-                                symbol: "line.3.horizontal.decrease.circle",
-                                title: "No headers yet",
-                                message: "Add headers as structured rows. Disabled rows stay in the editor but are ignored."
-                            )
-                        } else {
-                            VStack(spacing: 10) {
-                                ForEach(coordinator.state.workspaceRequest.headers) { header in
-                                    HeaderRowView(header: header)
-                                        .environmentObject(coordinator)
+                            if coordinator.state.workspaceRequest.headers.isEmpty {
+                                EmptySectionHint(
+                                    symbol: "line.3.horizontal.decrease.circle",
+                                    title: "No headers yet",
+                                    message: "Add headers as structured rows. Disabled rows stay in the editor but are ignored."
+                                )
+                            } else {
+                                VStack(spacing: 10) {
+                                    ForEach(coordinator.state.workspaceRequest.headers) { header in
+                                        HeaderRowView(header: header)
+                                            .environmentObject(coordinator)
+                                    }
                                 }
                             }
                         }
+                        .padding(14)
                     }
-                    .padding(14)
-                }
 
-                RequestBodySection(bodyText: bodyBinding, isJSONBody: requestBodyIsJSON)
+                    RequestBodySection(bodyText: bodyBinding, isJSONBody: requestBodyIsJSON)
+                }
+                .padding(20)
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(20)
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.28))
     }
@@ -459,7 +462,7 @@ private struct RequestBodySection: View {
                 } else {
                     TextEditor(text: $bodyText)
                         .font(.body.monospaced())
-                        .frame(minHeight: 220)
+                        .frame(minHeight: 220, maxHeight: .infinity)
                         .padding(8)
                         .background(
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -468,6 +471,7 @@ private struct RequestBodySection: View {
                         .accessibilityIdentifier("request-raw-body-editor")
                 }
             }
+            .frame(maxHeight: .infinity)
             .padding(14)
         }
     }
