@@ -30,6 +30,10 @@ test-ui:
 test-one selector:
     xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:{{selector}}
 
+# Start the test HTTP server on port 9999.
+test-server:
+    python3 NativeCurlRunnerTests/test_server.py
+
 # Remove local Xcode build products.
 clean:
     rm -rf {{derived_data}}
