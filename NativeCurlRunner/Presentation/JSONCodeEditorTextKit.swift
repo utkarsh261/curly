@@ -50,6 +50,8 @@ final class JSONFoldingLayoutManager: NSLayoutManager {
 
 final class JSONLineNumberRulerView: NSRulerView {
     var onToggleFold: ((Int) -> Void)?
+    private(set) var cachedFoldStartLines: Set<Int>?
+    private(set) var cachedLineMap: JSONLineMap?
 
     private weak var observedTextView: NSTextView?
     private let numberAttributes: [NSAttributedString.Key: Any] = [
@@ -61,8 +63,9 @@ final class JSONLineNumberRulerView: NSRulerView {
         .foregroundColor: themeAccentNS
     ]
 
-    var cachedFoldStartLines: Set<Int>?
-    var cachedLineMap: JSONLineMap?
+    private var coordinator: JSONCodeEditorView.Coordinator? {
+        observedTextView?.delegate as? JSONCodeEditorView.Coordinator
+    }
 
     func invalidateFoldCache() {
         cachedFoldStartLines = nil
@@ -95,21 +98,13 @@ final class JSONLineNumberRulerView: NSRulerView {
         bounds.fill()
 
         let text = textView.string
-        let lineMap: JSONLineMap
-        if let existing = cachedLineMap {
-            lineMap = existing
-        } else {
-            lineMap = JSONLineMap(text: text)
-            cachedLineMap = lineMap
-        }
+        let analysis = coordinator?.latestAnalysis ?? SyntaxAnalysisResult.analyze(text)
+        let lineMap = analysis.lineMap
+        let foldStartLines = Set(analysis.foldRanges.map { lineMap.lineNumber(at: $0.openTokenRange.location) })
+        
+        self.cachedFoldStartLines = foldStartLines
+        self.cachedLineMap = lineMap
 
-        let foldStartLines: Set<Int>
-        if let cached = cachedFoldStartLines {
-            foldStartLines = cached
-        } else {
-            foldStartLines = Set(JSONFoldIndex.foldRanges(in: text).map { lineMap.lineNumber(at: $0.openTokenRange.location) })
-            cachedFoldStartLines = foldStartLines
-        }
         let visibleRect = textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
 

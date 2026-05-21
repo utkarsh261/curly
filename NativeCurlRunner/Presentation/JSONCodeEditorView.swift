@@ -64,7 +64,9 @@ struct JSONCodeEditorView: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.layoutManager = layoutManager
         context.coordinator.rulerView = rulerView
-        context.coordinator.applyHighlighting(to: textView)
+        let initialAnalysis = SyntaxAnalysisResult.analyze(text)
+        context.coordinator.latestAnalysis = initialAnalysis
+        context.coordinator.applyHighlighting(to: textView, using: initialAnalysis)
 
         return scrollView
     }
@@ -87,7 +89,9 @@ struct JSONCodeEditorView: NSViewRepresentable {
             textView.string = text
             textView.selectedRanges = selectedRanges
             context.coordinator.isProgrammaticUpdate = false
-            context.coordinator.applyHighlighting(to: textView)
+            let analysis = SyntaxAnalysisResult.analyze(text)
+            context.coordinator.latestAnalysis = analysis
+            context.coordinator.applyHighlighting(to: textView, using: analysis)
             context.coordinator.rulerView?.invalidateFoldCache()
         }
 
@@ -104,6 +108,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
         weak var rulerView: JSONLineNumberRulerView?
         private var isApplyingHighlighting = false
         var isProgrammaticUpdate = false
+        var latestAnalysis: SyntaxAnalysisResult?
 
         init(text: Binding<String>, foldedRanges: Binding<[NSRange]>) {
             self.text = text
@@ -119,18 +124,23 @@ struct JSONCodeEditorView: NSViewRepresentable {
                 return
             }
 
+            let textVal = textView.string
+            let analysis = SyntaxAnalysisResult.analyze(textVal)
+            latestAnalysis = analysis
+
             rulerView?.invalidateFoldCache()
-            text.wrappedValue = textView.string
-            foldedRanges.wrappedValue = validFoldedRanges(in: textView.string)
-            applyHighlighting(to: textView)
+            text.wrappedValue = textVal
+            foldedRanges.wrappedValue = validFoldedRanges(in: textVal)
+            applyHighlighting(to: textView, using: analysis)
             rulerView?.needsDisplay = true
         }
 
         @MainActor
         func toggleFold(atZeroBasedLine lineNumber: Int) {
             guard let textView else { return }
-            let lineMap = JSONLineMap(text: textView.string)
-            guard let foldRange = JSONFoldIndex.foldRanges(in: textView.string).first(where: {
+            let analysis = latestAnalysis ?? SyntaxAnalysisResult.analyze(textView.string)
+            let lineMap = analysis.lineMap
+            guard let foldRange = analysis.foldRanges.first(where: {
                 lineMap.lineNumber(at: $0.openTokenRange.location) == lineNumber
             }) else {
                 return
@@ -167,7 +177,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
         }
 
         @MainActor
-        func applyHighlighting(to textView: NSTextView) {
+        func applyHighlighting(to textView: NSTextView, using analysis: SyntaxAnalysisResult? = nil) {
             guard !isApplyingHighlighting else {
                 return
             }
@@ -184,7 +194,10 @@ struct JSONCodeEditorView: NSViewRepresentable {
                 storage?.beginEditing()
                 storage?.setAttributes(baseAttributes, range: fullRange)
 
-                for token in JSONLexer.tokenize(textView.string) {
+                let resolvedAnalysis = analysis ?? latestAnalysis ?? SyntaxAnalysisResult.analyze(textView.string)
+                latestAnalysis = resolvedAnalysis
+
+                for token in resolvedAnalysis.tokens {
                     guard token.range.location != NSNotFound, NSMaxRange(token.range) <= source.length else {
                         continue
                     }
@@ -307,11 +320,25 @@ struct JSONEditorPanel: View {
                     .foregroundStyle(Color.accent)
             }
         }
-        .onAppear(perform: refreshValidation)
         .onChange(of: text) { _, _ in
-            refreshValidation()
             foldedRanges = []
             formattingError = nil
+        }
+        .task(id: text) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                self.validationResult = JSONValidationResult(isValid: true, errorMessage: nil)
+                return
+            }
+            do {
+                try await Task.sleep(nanoseconds: 300_000_000)
+                let result = await Task.detached(priority: .userInitiated) {
+                    return JSONValidator.validate(trimmed)
+                }.value
+                self.validationResult = result
+            } catch {
+                // Task was cancelled
+            }
         }
     }
 
@@ -326,11 +353,6 @@ struct JSONEditorPanel: View {
         validationResult.isValid ? Color(nsColor: .separatorColor).opacity(0.7) : .orange.opacity(0.8)
     }
 
-    private func refreshValidation() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        validationResult = trimmed.isEmpty ? JSONValidationResult(isValid: true, errorMessage: nil) : JSONValidator.validate(text)
-    }
-
     private func collapseAll() {
         foldedRanges = JSONFoldIndex.foldRanges(in: text)
             .filter { $0.depth > 0 }
@@ -342,20 +364,32 @@ struct JSONEditorPanel: View {
     }
 
     private func format() {
-        do {
-            text = try JSONFormatter.format(text)
-            formattingError = nil
-        } catch {
-            formattingError = error.localizedDescription
+        let currentText = text
+        Task {
+            do {
+                let formatted = try await Task.detached(priority: .userInitiated) {
+                    try JSONFormatter.format(currentText)
+                }.value
+                self.text = formatted
+                self.formattingError = nil
+            } catch {
+                self.formattingError = error.localizedDescription
+            }
         }
     }
 
     private func compact() {
-        do {
-            text = try JSONFormatter.compact(text)
-            formattingError = nil
-        } catch {
-            formattingError = error.localizedDescription
+        let currentText = text
+        Task {
+            do {
+                let compacted = try await Task.detached(priority: .userInitiated) {
+                    try JSONFormatter.compact(currentText)
+                }.value
+                self.text = compacted
+                self.formattingError = nil
+            } catch {
+                self.formattingError = error.localizedDescription
+            }
         }
     }
 }

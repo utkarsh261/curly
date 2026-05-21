@@ -151,5 +151,70 @@ final class JSONEditingTests: XCTestCase {
         XCTAssertEqual(tokens4.filter { $0.kind == .string }.count, 3) // "a", "b", "true"
         XCTAssertEqual(tokens4.filter { $0.kind == .boolLiteral }.count, 1) // the unquoted true
     }
+
+    func testConsolidatedAnalysisMatchesDiscreteParsing() {
+        let text = """
+        {
+          "stringVal": "hello",
+          "numberVal": 123.45,
+          "boolVal": true,
+          "nullVal": null,
+          "arrayVal": [
+            {
+              "nested": {}
+            }
+          ]
+        }
+        """
+        
+        // 1. Run consolidated analysis
+        let analysis = SyntaxAnalysisResult.analyze(text)
+        
+        // 2. Run discrete parsing
+        let expectedTokens = JSONLexer.tokenize(text)
+        let expectedLineMap = JSONLineMap(text: text)
+        let expectedFoldRanges = JSONFoldIndex.foldRanges(in: text)
+        
+        // 3. Assert exact equality
+        XCTAssertEqual(analysis.tokens, expectedTokens, "Consolidated tokens should perfectly match discrete tokens")
+        XCTAssertEqual(analysis.lineMap, expectedLineMap, "Consolidated line map should perfectly match discrete line map")
+        XCTAssertEqual(analysis.foldRanges, expectedFoldRanges, "Consolidated fold ranges should perfectly match discrete fold ranges")
+    }
+    
+    func testFoldRangesConsumesPrecalculatedInputs() {
+        let text = """
+        {
+          "arr": [1, 2, 3],
+          "obj": {
+            "key": "val"
+          }
+        }
+        """
+        
+        let tokens = JSONLexer.tokenize(text)
+        let lineMap = JSONLineMap(text: text)
+        
+        // Pass precalculated inputs
+        let foldRangesWithInputs = JSONFoldIndex.foldRanges(in: text, tokens: tokens, lineMap: lineMap)
+        
+        // Pass no precalculated inputs
+        let foldRangesWithoutInputs = JSONFoldIndex.foldRanges(in: text)
+        
+        XCTAssertEqual(foldRangesWithInputs, foldRangesWithoutInputs, "Passing precalculated inputs should produce identical results")
+    }
+
+    func testLineMapLineNumberLookup() {
+        let text = "line0\nline1\nline2\nline3\n"
+        let lineMap = JSONLineMap(text: text)
+        
+        // Test exact character locations
+        XCTAssertEqual(lineMap.lineNumber(at: 0), 0) // 'l' of line0
+        XCTAssertEqual(lineMap.lineNumber(at: 5), 0) // '\n'
+        XCTAssertEqual(lineMap.lineNumber(at: 6), 1) // 'l' of line1
+        XCTAssertEqual(lineMap.lineNumber(at: 11), 1) // '\n'
+        XCTAssertEqual(lineMap.lineNumber(at: 12), 2) // 'l' of line2
+        XCTAssertEqual(lineMap.lineNumber(at: 17), 2) // '\n'
+        XCTAssertEqual(lineMap.lineNumber(at: 18), 3) // 'l' of line3
+    }
 }
 

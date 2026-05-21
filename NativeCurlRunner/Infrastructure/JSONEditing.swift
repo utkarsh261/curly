@@ -239,21 +239,22 @@ struct JSONFoldRange: Equatable {
 }
 
 enum JSONFoldIndex {
-    static func foldRanges(in text: String) -> [JSONFoldRange] {
-        let lineMap = JSONLineMap(text: text)
+    static func foldRanges(in text: String, tokens: [JSONToken]? = nil, lineMap: JSONLineMap? = nil) -> [JSONFoldRange] {
+        let resolvedLineMap = lineMap ?? JSONLineMap(text: text)
+        let resolvedTokens = tokens ?? JSONLexer.tokenize(text)
         var stack: [(kind: JSONFoldKind, tokenRange: NSRange)] = []
         var ranges: [JSONFoldRange] = []
 
-        for token in JSONLexer.tokenize(text) {
+        for token in resolvedTokens {
             switch token.kind {
             case .leftBrace:
                 stack.append((kind: .object, tokenRange: token.range))
             case .leftBracket:
                 stack.append((kind: .array, tokenRange: token.range))
             case .rightBrace:
-                appendRangeIfMatched(kind: .object, closeRange: token.range, lineMap: lineMap, stack: &stack, ranges: &ranges)
+                appendRangeIfMatched(kind: .object, closeRange: token.range, lineMap: resolvedLineMap, stack: &stack, ranges: &ranges)
             case .rightBracket:
-                appendRangeIfMatched(kind: .array, closeRange: token.range, lineMap: lineMap, stack: &stack, ranges: &ranges)
+                appendRangeIfMatched(kind: .array, closeRange: token.range, lineMap: resolvedLineMap, stack: &stack, ranges: &ranges)
             default:
                 continue
             }
@@ -287,7 +288,7 @@ enum JSONFoldIndex {
     }
 }
 
-struct JSONLineMap {
+struct JSONLineMap: Equatable {
     private let lineStarts: [Int]
 
     init(text: String) {
@@ -427,4 +428,25 @@ enum JSONFormatter {
         return String(data: data, encoding: .utf8) ?? ""
     }
 
+}
+
+struct SyntaxAnalysisResult: Equatable {
+    let text: String
+    let tokens: [JSONToken]
+    let lineMap: JSONLineMap
+    let foldRanges: [JSONFoldRange]
+
+    static func analyze(_ text: String) -> SyntaxAnalysisResult {
+        let tokens = JSONLexer.tokenize(text)
+        let lineMap = JSONLineMap(text: text)
+        let foldRanges = JSONFoldIndex.foldRanges(in: text, tokens: tokens, lineMap: lineMap)
+        return SyntaxAnalysisResult(text: text, tokens: tokens, lineMap: lineMap, foldRanges: foldRanges)
+    }
+
+    static let empty = SyntaxAnalysisResult(
+        text: "",
+        tokens: [],
+        lineMap: JSONLineMap(text: ""),
+        foldRanges: []
+    )
 }
