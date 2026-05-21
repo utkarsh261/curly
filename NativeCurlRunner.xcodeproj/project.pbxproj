@@ -1,0 +1,684 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A00000010000000000000001 /* NativeCurlRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000001 /* NativeCurlRunnerApp.swift */; };
+		A00000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000003 /* Models.swift */; };
+		A00000010000000000000004 /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000004 /* SessionCoordinator.swift */; };
+		A00000010000000000000005 /* WorkspaceRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000005 /* WorkspaceRootView.swift */; };
+		A00000010000000000000006 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000006 /* MenuBarView.swift */; };
+		A00000010000000000000007 /* CurlImporting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000008 /* CurlImporting.swift */; };
+		A00000010000000000000008 /* SimpleCurlImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000009 /* SimpleCurlImporter.swift */; };
+		A00000010000000000000009 /* URLInputField.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000010 /* URLInputField.swift */; };
+		A00000010000000000000010 /* RequestExecuting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000011 /* RequestExecuting.swift */; };
+		A00000010000000000000011 /* ResponseFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000012 /* ResponseFormatting.swift */; };
+		B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* SessionCoordinatorTests.swift */; };
+		B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000002 /* SimpleCurlImporterTests.swift */; };
+		B00000010000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
+		B00000010000000000000004 /* RequestValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000005 /* RequestValidationTests.swift */; };
+		B00000010000000000000005 /* RequestExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000006 /* RequestExecutorTests.swift */; };
+		B00000010000000000000006 /* ResponseFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000007 /* ResponseFormatterTests.swift */; };
+		C00000010000000000000001 /* URLBarImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* URLBarImportUITests.swift */; };
+		C00000010000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B00000210000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000610000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000410000000000000001;
+			remoteInfo = NativeCurlRunner;
+		};
+		C00000210000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000610000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000410000000000000001;
+			remoteInfo = NativeCurlRunner;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A00000110000000000000001 /* NativeCurlRunnerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCurlRunnerApp.swift; sourceTree = "<group>"; };
+		A00000110000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		A00000110000000000000004 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
+		A00000110000000000000005 /* WorkspaceRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootView.swift; sourceTree = "<group>"; };
+		A00000110000000000000006 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		A00000110000000000000007 /* NativeCurlRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NativeCurlRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000110000000000000008 /* CurlImporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurlImporting.swift; sourceTree = "<group>"; };
+		A00000110000000000000009 /* SimpleCurlImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporter.swift; sourceTree = "<group>"; };
+		A00000110000000000000010 /* URLInputField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLInputField.swift; sourceTree = "<group>"; };
+		A00000110000000000000011 /* RequestExecuting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecuting.swift; sourceTree = "<group>"; };
+		A00000110000000000000012 /* ResponseFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseFormatting.swift; sourceTree = "<group>"; };
+		A00000110000000000000013 /* NativeCurlRunner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NativeCurlRunner.entitlements; sourceTree = "<group>"; };
+		B00000110000000000000001 /* SessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinatorTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000002 /* SimpleCurlImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporterTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000003 /* NativeCurlRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000110000000000000004 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		B00000110000000000000005 /* RequestValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestValidationTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000006 /* RequestExecutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecutorTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000007 /* ResponseFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseFormatterTests.swift; sourceTree = "<group>"; };
+		C00000110000000000000001 /* URLBarImportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLBarImportUITests.swift; sourceTree = "<group>"; };
+		C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A00000210000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000310000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000010000000000000003 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C00000310000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000010000000000000002 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5E5FC9CC2FBE31C60004F011 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				B00000110000000000000004 /* XCTest.framework */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
+		A00000310000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A00000310000000000000002 /* NativeCurlRunner */,
+				B00000310000000000000002 /* NativeCurlRunnerTests */,
+				C00000310000000000000002 /* NativeCurlRunnerUITests */,
+				A00000310000000000000003 /* Products */,
+				5E5FC9CC2FBE31C60004F011 /* Recovered References */,
+			);
+			sourceTree = "<group>";
+		};
+		A00000310000000000000002 /* NativeCurlRunner */ = {
+			isa = PBXGroup;
+			children = (
+				A00000310000000000000004 /* App */,
+				A00000310000000000000005 /* Application */,
+				A00000310000000000000006 /* Domain */,
+				A00000310000000000000008 /* Infrastructure */,
+				A00000310000000000000007 /* Presentation */,
+			);
+			path = NativeCurlRunner;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000007 /* NativeCurlRunner.app */,
+				B00000110000000000000003 /* NativeCurlRunnerTests.xctest */,
+				C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000004 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000001 /* NativeCurlRunnerApp.swift */,
+				A00000110000000000000013 /* NativeCurlRunner.entitlements */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000005 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000004 /* SessionCoordinator.swift */,
+			);
+			path = Application;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000006 /* Domain */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000003 /* Models.swift */,
+			);
+			path = Domain;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000007 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000005 /* WorkspaceRootView.swift */,
+				A00000110000000000000006 /* MenuBarView.swift */,
+				A00000110000000000000010 /* URLInputField.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
+		A00000310000000000000008 /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				A00000110000000000000008 /* CurlImporting.swift */,
+				A00000110000000000000009 /* SimpleCurlImporter.swift */,
+				A00000110000000000000011 /* RequestExecuting.swift */,
+				A00000110000000000000012 /* ResponseFormatting.swift */,
+			);
+			path = Infrastructure;
+			sourceTree = "<group>";
+		};
+		B00000310000000000000002 /* NativeCurlRunnerTests */ = {
+			isa = PBXGroup;
+			children = (
+				B00000110000000000000005 /* RequestValidationTests.swift */,
+				B00000110000000000000006 /* RequestExecutorTests.swift */,
+				B00000110000000000000007 /* ResponseFormatterTests.swift */,
+				B00000110000000000000001 /* SessionCoordinatorTests.swift */,
+				B00000110000000000000002 /* SimpleCurlImporterTests.swift */,
+			);
+			path = NativeCurlRunnerTests;
+			sourceTree = "<group>";
+		};
+		C00000310000000000000002 /* NativeCurlRunnerUITests */ = {
+			isa = PBXGroup;
+			children = (
+				C00000110000000000000001 /* URLBarImportUITests.swift */,
+			);
+			path = NativeCurlRunnerUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000410000000000000001 /* NativeCurlRunner */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunner" */;
+			buildPhases = (
+				A00000510000000000000001 /* Sources */,
+				A00000210000000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NativeCurlRunner;
+			packageProductDependencies = (
+			);
+			productName = NativeCurlRunner;
+			productReference = A00000110000000000000007 /* NativeCurlRunner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B00000410000000000000001 /* NativeCurlRunnerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerTests" */;
+			buildPhases = (
+				B00000510000000000000001 /* Sources */,
+				B00000310000000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B00000610000000000000001 /* PBXTargetDependency */,
+			);
+			name = NativeCurlRunnerTests;
+			packageProductDependencies = (
+			);
+			productName = NativeCurlRunnerTests;
+			productReference = B00000110000000000000003 /* NativeCurlRunnerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		C00000410000000000000001 /* NativeCurlRunnerUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerUITests" */;
+			buildPhases = (
+				C00000510000000000000001 /* Sources */,
+				C00000310000000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C00000610000000000000001 /* PBXTargetDependency */,
+			);
+			name = NativeCurlRunnerUITests;
+			packageProductDependencies = (
+			);
+			productName = NativeCurlRunnerUITests;
+			productReference = C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000610000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					A00000410000000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					B00000410000000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = A00000410000000000000001;
+					};
+					C00000410000000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+						TestTargetID = A00000410000000000000001;
+					};
+				};
+			};
+			buildConfigurationList = A00000810000000000000002 /* Build configuration list for PBXProject "NativeCurlRunner" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A00000310000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = A00000310000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000410000000000000001 /* NativeCurlRunner */,
+				B00000410000000000000001 /* NativeCurlRunnerTests */,
+				C00000410000000000000001 /* NativeCurlRunnerUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A00000510000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000010000000000000001 /* NativeCurlRunnerApp.swift in Sources */,
+				A00000010000000000000003 /* Models.swift in Sources */,
+				A00000010000000000000004 /* SessionCoordinator.swift in Sources */,
+				A00000010000000000000005 /* WorkspaceRootView.swift in Sources */,
+				A00000010000000000000006 /* MenuBarView.swift in Sources */,
+				A00000010000000000000007 /* CurlImporting.swift in Sources */,
+				A00000010000000000000008 /* SimpleCurlImporter.swift in Sources */,
+				A00000010000000000000009 /* URLInputField.swift in Sources */,
+				A00000010000000000000010 /* RequestExecuting.swift in Sources */,
+				A00000010000000000000011 /* ResponseFormatting.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000510000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000010000000000000004 /* RequestValidationTests.swift in Sources */,
+				B00000010000000000000005 /* RequestExecutorTests.swift in Sources */,
+				B00000010000000000000006 /* ResponseFormatterTests.swift in Sources */,
+				B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */,
+				B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C00000510000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C00000010000000000000001 /* URLBarImportUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B00000610000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000410000000000000001 /* NativeCurlRunner */;
+			targetProxy = B00000210000000000000001 /* PBXContainerItemProxy */;
+		};
+		C00000610000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000410000000000000001 /* NativeCurlRunner */;
+			targetProxy = C00000210000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A00000710000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A00000710000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A00000710000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NativeCurlRunner/App/NativeCurlRunner.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = NativeCurlRunner;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		A00000710000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = NativeCurlRunner/App/NativeCurlRunner.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = NativeCurlRunner;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunner;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		B00000710000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeCurlRunner.app/Contents/MacOS/NativeCurlRunner";
+				TEST_TARGET_NAME = NativeCurlRunner;
+			};
+			name = Debug;
+		};
+		B00000710000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeCurlRunner.app/Contents/MacOS/NativeCurlRunner";
+				TEST_TARGET_NAME = NativeCurlRunner;
+			};
+			name = Release;
+		};
+		C00000710000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = NativeCurlRunner;
+			};
+			name = Debug;
+		};
+		C00000710000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = NativeCurlRunner;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000710000000000000003 /* Debug */,
+				A00000710000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000810000000000000002 /* Build configuration list for PBXProject "NativeCurlRunner" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000710000000000000001 /* Debug */,
+				A00000710000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B00000710000000000000001 /* Debug */,
+				B00000710000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		C00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C00000710000000000000001 /* Debug */,
+				C00000710000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000610000000000000001 /* Project object */;
+}
