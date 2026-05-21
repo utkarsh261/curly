@@ -415,8 +415,8 @@ def handle_headers(h, m, p, q, groups):
 
 
 def handle_anything(h, m, p, q, groups):
-    body = read_body(h)
     body_bytes = read_body_bytes(h)
+    body = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
     ct = h.headers.get("Content-Type", "")
     result = {
         "method": m,

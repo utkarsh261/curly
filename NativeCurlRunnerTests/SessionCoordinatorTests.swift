@@ -83,9 +83,11 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state.workspaceRequest.method, .post)
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://example.com")
-        XCTAssertEqual(coordinator.state.workspaceRequest.headers.count, 1)
+        XCTAssertEqual(coordinator.state.workspaceRequest.headers.count, 2)
         XCTAssertEqual(coordinator.state.workspaceRequest.headers[0].name, "Accept")
         XCTAssertEqual(coordinator.state.workspaceRequest.headers[0].value, "application/json")
+        XCTAssertEqual(coordinator.state.workspaceRequest.headers[1].name, "Content-Type")
+        XCTAssertEqual(coordinator.state.workspaceRequest.headers[1].value, "application/x-www-form-urlencoded")
         XCTAssertEqual(coordinator.state.workspaceRequest.body, .text("{\"ok\":true}"))
         XCTAssertNil(coordinator.state.replaceConfirmationState)
         XCTAssertNil(coordinator.state.inlineErrorMessage)

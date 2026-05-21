@@ -7,7 +7,7 @@ struct SimpleCurlImporter: CurlImporting {
             throw CurlImportError.emptyInput
         }
 
-        let tokens = try ShellTokenizer.tokenize(trimmed)
+        let tokens = try ShellTokenizer.tokenize(Self.normalizeLineContinuations(in: trimmed))
         let command = try CurlCommandParser().parse(tokens)
         let request = try CurlRequestMapper().map(command)
 
@@ -17,6 +17,40 @@ struct SimpleCurlImporter: CurlImporting {
             sourceCurl: trimmed
         )
     }
+
+    private static func normalizeLineContinuations(in input: String) -> String {
+        var output = ""
+        var index = input.startIndex
+
+        while index < input.endIndex {
+            if input[index] == "\\" {
+                var lookahead = input.index(after: index)
+                while lookahead < input.endIndex, input[lookahead] == " " || input[lookahead] == "\t" {
+                    lookahead = input.index(after: lookahead)
+                }
+
+                if lookahead < input.endIndex, input[lookahead] == "\n" {
+                    output.append(" ")
+                    index = input.index(after: lookahead)
+                    continue
+                }
+
+                if lookahead < input.endIndex, input[lookahead] == "\r" {
+                    let afterCarriageReturn = input.index(after: lookahead)
+                    if afterCarriageReturn < input.endIndex, input[afterCarriageReturn] == "\n" {
+                        output.append(" ")
+                        index = input.index(after: afterCarriageReturn)
+                        continue
+                    }
+                }
+            }
+
+            output.append(input[index])
+            index = input.index(after: index)
+        }
+
+        return output
+    }
 }
 
 private struct CurlCommand {
@@ -24,6 +58,7 @@ private struct CurlCommand {
     var url: String?
     var headers: [Header] = []
     var bodyParts: [String] = []
+    var usesDataBody = false
     var warnings: [String] = []
 
     mutating func setMethod(_ newMethod: HTTPMethod, source: String) {
@@ -129,16 +164,17 @@ private struct CurlOptionRegistry {
             CurlOptionDefinition(names: ["--url"], arity: .requiredValue, behavior: .url),
             CurlOptionDefinition(names: ["-A", "--user-agent"], arity: .requiredValue, behavior: .headerValue(name: "User-Agent")),
             CurlOptionDefinition(names: ["-b", "--cookie"], arity: .requiredValue, behavior: .cookie),
-            CurlOptionDefinition(names: ["--cookie-jar"], arity: .requiredValue, behavior: .warnValue("Cookie jar files are not represented yet.")),
+            CurlOptionDefinition(names: ["-c", "--cookie-jar"], arity: .requiredValue, behavior: .warnValue("Cookie jar files are not represented yet.")),
             CurlOptionDefinition(names: ["-u", "--user"], arity: .requiredValue, behavior: .basicAuth),
             CurlOptionDefinition(names: ["-I", "--head"], arity: .none, behavior: .head),
             CurlOptionDefinition(names: ["-L", "--location"], arity: .none, behavior: .warn("Redirect-following from `--location` is not represented yet.")),
             CurlOptionDefinition(names: ["-i", "--include"], arity: .none, behavior: .warn("Ignored terminal output flag `-i`.")),
+            CurlOptionDefinition(names: ["-w", "--write-out"], arity: .requiredValue, behavior: .warnValue("Ignored terminal write-out flag.")),
             CurlOptionDefinition(names: ["-v", "--verbose"], arity: .none, behavior: .warn("Ignored terminal output flag `-v`.")),
             CurlOptionDefinition(names: ["-s", "--silent"], arity: .none, behavior: .warn("Ignored terminal output flag `-s`.")),
             CurlOptionDefinition(names: ["--fail", "--fail-with-body"], arity: .none, behavior: .warn("Ignored terminal failure handling flag.")),
             CurlOptionDefinition(names: ["--compressed"], arity: .none, behavior: .ignore),
-            CurlOptionDefinition(names: ["-F", "--form", "--form-string"], arity: .requiredValue, behavior: .warnValue("Multipart form data is not represented yet.")),
+            CurlOptionDefinition(names: ["-F", "--form", "--form-string"], arity: .requiredValue, behavior: .multipartForm),
             CurlOptionDefinition(names: ["-o", "--output", "-D", "--dump-header"], arity: .requiredValue, behavior: .warnValue("Ignored file output flag.")),
             CurlOptionDefinition(names: ["-O", "--remote-name"], arity: .none, behavior: .warn("Ignored file output flag.")),
             CurlOptionDefinition(names: ["--proxy", "-x", "--proxy-user", "--proxy-header"], arity: .requiredValue, behavior: .warnValue("Proxy options are not represented yet.")),
@@ -174,6 +210,7 @@ private enum CurlOptionBehavior {
     case cookie
     case basicAuth
     case head
+    case multipartForm
     case ignore
     case warn(String)
     case warnValue(String)
@@ -197,6 +234,7 @@ private enum CurlOptionBehavior {
                 command.warnings.append("File-backed request bodies are not represented yet.")
                 return
             }
+            command.usesDataBody = true
             command.bodyParts.append(value)
 
         case .jsonBody:
@@ -228,7 +266,7 @@ private enum CurlOptionBehavior {
 
         case .cookie:
             guard let value else { return }
-            guard !value.hasPrefix("@") else {
+            guard value.contains("=") else {
                 command.warnings.append("Cookie files are not represented yet.")
                 return
             }
@@ -244,6 +282,12 @@ private enum CurlOptionBehavior {
 
         case .head:
             command.setMethod(.head, source: token)
+
+        case .multipartForm:
+            if command.method == nil {
+                command.setMethod(.post, source: token)
+            }
+            command.warnings.append("Multipart form data is not represented yet.")
 
         case .ignore:
             return
@@ -277,11 +321,17 @@ private struct CurlRequestMapper {
         }
 
         let body = command.bodyParts.isEmpty ? nil : command.bodyParts.joined(separator: "&")
+        var headers = command.headers
+        if body != nil,
+           command.usesDataBody,
+           !headers.contains(where: { $0.name.caseInsensitiveCompare("Content-Type") == .orderedSame }) {
+            headers.append(Header(name: "Content-Type", value: "application/x-www-form-urlencoded"))
+        }
 
         return Request(
             method: command.method ?? (body == nil ? .get : .post),
             urlString: url,
-            headers: command.headers,
+            headers: headers,
             body: body.map(RequestBody.text) ?? .none
         )
     }

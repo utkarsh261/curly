@@ -7,6 +7,7 @@ enum HTTPMethod: String, CaseIterable, Codable, Identifiable {
     case put = "PUT"
     case patch = "PATCH"
     case delete = "DELETE"
+    case options = "OPTIONS"
 
     var id: String { rawValue }
 }

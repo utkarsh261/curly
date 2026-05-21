@@ -32,17 +32,35 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(request.body, .text("{\"name\": \"John Doe\", \"email\": \"john@example.com\"}"))
     }
 
+    func testParsesMultilineCurlWithWhitespaceAfterBackslashContinuations() throws {
+        let request = try importer.parse("curl -X PUT http://localhost:9999/put \\  \n  -H \"Content-Type: text/plain\" \\ \n  -d \"some raw text body\"").request
+
+        XCTAssertEqual(request.method, .put)
+        XCTAssertEqual(request.urlString, "http://localhost:9999/put")
+        XCTAssertEqual(request.headers.map(\.name), ["Content-Type"])
+        XCTAssertEqual(request.headers.map(\.value), ["text/plain"])
+        XCTAssertEqual(request.body, .text("some raw text body"))
+    }
+
     func testInfersPostWhenBodyExistsWithoutExplicitMethod() throws {
         let request = try importer.parse("curl https://example.com --data '{\"name\":\"utk\"}'").request
 
         XCTAssertEqual(request.method, .post)
         XCTAssertEqual(request.body, .text("{\"name\":\"utk\"}"))
+        XCTAssertEqual(request.headers.map(\.name), ["Content-Type"])
+        XCTAssertEqual(request.headers.map(\.value), ["application/x-www-form-urlencoded"])
     }
 
     func testParsesExplicitMethod() throws {
         let request = try importer.parse("curl https://example.com --request PATCH").request
 
         XCTAssertEqual(request.method, .patch)
+    }
+
+    func testParsesOptionsMethod() throws {
+        let request = try importer.parse("curl -X OPTIONS https://example.com/anything").request
+
+        XCTAssertEqual(request.method, .options)
     }
 
     func testPreservesRepeatedHeaderOrder() throws {
@@ -55,6 +73,7 @@ final class SimpleCurlImporterTests: XCTestCase {
     func testImportsMultipartFormAsUsableRequestWithWarning() throws {
         let result = try importer.parse("curl https://example.com -F 'file=@demo.txt'")
 
+        XCTAssertEqual(result.request.method, .post)
         XCTAssertEqual(result.request.urlString, "https://example.com")
         XCTAssertEqual(result.request.body, .none)
         XCTAssertEqual(result.warnings, ["Multipart form data is not represented yet."])
@@ -86,8 +105,8 @@ final class SimpleCurlImporterTests: XCTestCase {
         let request = try importer.parse("curl -XPOST -HAccept:application/json -d'{\"ok\":true}' https://example.com").request
 
         XCTAssertEqual(request.method, .post)
-        XCTAssertEqual(request.headers.map(\.name), ["Accept"])
-        XCTAssertEqual(request.headers.map(\.value), ["application/json"])
+        XCTAssertEqual(request.headers.map(\.name), ["Accept", "Content-Type"])
+        XCTAssertEqual(request.headers.map(\.value), ["application/json", "application/x-www-form-urlencoded"])
         XCTAssertEqual(request.body, .text("{\"ok\":true}"))
     }
 
@@ -132,6 +151,28 @@ final class SimpleCurlImporterTests: XCTestCase {
 
         XCTAssertEqual(request.headers.map(\.name), ["Cookie"])
         XCTAssertEqual(request.headers.map(\.value), ["a=1; b=2"])
+    }
+
+    func testCookieFileWarnsAndDoesNotBecomeURL() throws {
+        let result = try importer.parse("curl -b /tmp/cookies.txt https://example.com/cookies")
+
+        XCTAssertEqual(result.request.urlString, "https://example.com/cookies")
+        XCTAssertEqual(result.request.headers, [])
+        XCTAssertEqual(result.warnings, ["Cookie files are not represented yet."])
+    }
+
+    func testCookieJarFlagConsumesValueAndWarns() throws {
+        let result = try importer.parse("curl -c /tmp/cookies.txt https://example.com/cookies/set?session=abc")
+
+        XCTAssertEqual(result.request.urlString, "https://example.com/cookies/set?session=abc")
+        XCTAssertEqual(result.warnings, ["Cookie jar files are not represented yet."])
+    }
+
+    func testWriteOutFlagConsumesValueAndWarns() throws {
+        let result = try importer.parse("curl -w '\\nHTTP %{http_code}\\n' https://example.com/status/418")
+
+        XCTAssertEqual(result.request.urlString, "https://example.com/status/418")
+        XCTAssertEqual(result.warnings, ["Ignored terminal write-out flag."])
     }
 
     func testFileBackedBodyWarnsAndLeavesBodyEmpty() throws {

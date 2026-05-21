@@ -8,6 +8,7 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertFalse(Request(method: .get, urlString: "http://", headers: [], body: .none).isMinimallyValid)
         XCTAssertTrue(Request(method: .get, urlString: "https://example.com", headers: [], body: .none).isMinimallyValid)
         XCTAssertTrue(Request(method: .head, urlString: "https://example.com", headers: [], body: .none).isMinimallyValid)
+        XCTAssertTrue(Request(method: .options, urlString: "https://example.com", headers: [], body: .none).isMinimallyValid)
         XCTAssertTrue(Request(method: .get, urlString: "http://localhost:3000", headers: [], body: .none).isMinimallyValid)
     }
 

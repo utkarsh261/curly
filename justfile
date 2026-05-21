@@ -16,19 +16,19 @@ build:
 
 # Run all unit and UI tests.
 test:
-    xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test
+    zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test
 
 # Run unit tests only.
 test-unit:
-    xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -skip-testing:NativeCurlRunnerUITests
+    zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -skip-testing:NativeCurlRunnerUITests
 
 # Run UI tests only.
 test-ui:
-    xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:NativeCurlRunnerUITests
+    zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:NativeCurlRunnerUITests
 
 # Run a single XCTest selector.
 test-one selector:
-    xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:{{selector}}
+    zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:{{selector}}
 
 # Start the test HTTP server on port 9999.
 test-server:

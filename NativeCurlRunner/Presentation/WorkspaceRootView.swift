@@ -562,6 +562,7 @@ private struct JSONRootView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityIdentifier("response-json-tree")
     }
 }
 

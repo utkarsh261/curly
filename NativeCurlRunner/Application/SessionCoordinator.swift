@@ -105,7 +105,7 @@ final class SessionCoordinator: ObservableObject {
 
     func handleURLBarPaste(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("curl ") else {
+        guard Self.looksLikeCurlCommand(trimmed) else {
             setURL(text)
             return
         }
@@ -129,6 +129,10 @@ final class SessionCoordinator: ObservableObject {
         } catch {
             setInlineError(error.localizedDescription)
         }
+    }
+
+    private static func looksLikeCurlCommand(_ text: String) -> Bool {
+        text == "curl" || text.hasPrefix("curl ") || text.hasPrefix("curl\t") || text.hasPrefix("curl\n")
     }
 
     func confirmWorkspaceReplacement() {

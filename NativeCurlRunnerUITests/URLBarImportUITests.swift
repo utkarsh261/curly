@@ -1,4 +1,6 @@
 import XCTest
+import Foundation
+import AppKit
 
 @MainActor
 final class URLBarImportUITests: XCTestCase {
@@ -20,6 +22,46 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(runButton.waitForExistence(timeout: 2), "Run button should exist.")
         XCTAssertTrue(runButton.isEnabled, "Run should be enabled after a valid cURL import.")
         XCTAssertFalse(app.staticTexts["Request Issue"].exists, "A valid cURL import should not show a request issue.")
+    }
+
+    func testRealPasteSimpleCurlParsesURLAndEnablesRun() throws {
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste("curl https://www.example.com", into: urlField)
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) {
+                urlField.value as? String == "https://www.example.com"
+            },
+            "A real paste of a simple cURL should show the parsed URL, not the literal cURL command."
+        )
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled)
+        XCTAssertFalse(app.staticTexts["Request Issue"].exists)
+    }
+
+    func testRealPasteMultilineCurlWithContinuationsParsesURLAndBody() throws {
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(
+            """
+            curl -X PUT http://localhost:9999/put \\
+              -H "Content-Type: text/plain" \\
+              -d "some raw text body"
+            """,
+            into: urlField
+        )
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) {
+                urlField.value as? String == "http://localhost:9999/put"
+            },
+            "A real paste of a multiline cURL should show the parsed URL, not the literal cURL command."
+        )
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled)
     }
 
     func testURLBarPlainURLInputKeepsURLAndEnablesRun() throws {
@@ -172,6 +214,33 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertFalse(app.buttons["run-button"].firstMatch.isEnabled)
     }
 
+    func testLocalServerJSONPostCurlRunsAndRendersResponseTree() async throws {
+        let server = try await UITestLocalHTTPServer.start()
+        defer { server.stop() }
+
+        let (app, _) = launchWithURLBarInput(
+            #"curl -X POST http://127.0.0.1:9999/post -H "Content-Type: application/json" -d '{"title": "hello", "count": 42}'"#
+        )
+        defer { app.terminate() }
+
+        triggerRun(app)
+
+        XCTAssertTrue(app.scrollViews["response-json-tree"].waitForExistence(timeout: 5))
+    }
+
+    func testLocalServerPutRawTextCurlRunsAndRendersEchoedBody() async throws {
+        let server = try await UITestLocalHTTPServer.start()
+        defer { server.stop() }
+
+        let (app, _) = launchWithURLBarInput(
+            #"curl -X PUT http://127.0.0.1:9999/put -H "Content-Type: text/plain" -d "some raw text body""#
+        )
+        defer { app.terminate() }
+
+        triggerRun(app)
+        XCTAssertTrue(app.scrollViews["response-json-tree"].waitForExistence(timeout: 5))
+    }
+
     private func launchWithURLBarInput(
         _ input: String,
         usesStubExecutor: Bool = false,
@@ -199,6 +268,15 @@ final class URLBarImportUITests: XCTestCase {
         let urlField = app.textFields["url-input-field"].firstMatch
         ensureMainWindowIsOpen(app: app, urlField: urlField)
         return app
+    }
+
+    private func paste(_ text: String, into element: XCUIElement) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+
+        element.click()
+        element.typeKey("a", modifierFlags: .command)
+        element.typeKey("v", modifierFlags: .command)
     }
 
     private func openMenuBarExtra(app: XCUIApplication) {
@@ -269,5 +347,59 @@ final class URLBarImportUITests: XCTestCase {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
         }
         return condition()
+    }
+}
+
+private final class UITestLocalHTTPServer {
+    private let process: Process?
+
+    private init(process: Process?) {
+        self.process = process
+    }
+
+    static func start() async throws -> UITestLocalHTTPServer {
+        if await isReachable() {
+            return UITestLocalHTTPServer(process: nil)
+        }
+
+        let scriptURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("NativeCurlRunnerTests/test_server.py")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [scriptURL.path]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if await isReachable() {
+                return UITestLocalHTTPServer(process: process)
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        process.terminate()
+        throw XCTSkip("Local test server did not become reachable on http://localhost:9999.")
+    }
+
+    func stop() {
+        guard let process, process.isRunning else { return }
+        process.terminate()
+    }
+
+    private static func isReachable() async -> Bool {
+        guard let url = URL(string: "http://127.0.0.1:9999/json") else {
+            return false
+        }
+
+        do {
+            let (_, response) = try await URLSession.shared.data(from: url)
+            return (response as? HTTPURLResponse)?.statusCode == 200
+        } catch {
+            return false
+        }
     }
 }

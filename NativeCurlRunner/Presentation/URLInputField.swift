@@ -54,7 +54,13 @@ struct URLInputField: NSViewRepresentable {
             guard let textField = notification.object as? NSTextField else {
                 return
             }
-            text.wrappedValue = textField.stringValue
+
+            let newText = textField.stringValue
+            if Self.looksLikeCurlCommand(newText), handlePaste(newText) {
+                return
+            }
+
+            text.wrappedValue = newText
         }
 
         func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -71,6 +77,11 @@ struct URLInputField: NSViewRepresentable {
 
         func handlePaste(_ pastedText: String) -> Bool {
             onPaste(pastedText)
+        }
+
+        private static func looksLikeCurlCommand(_ text: String) -> Bool {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed == "curl" || trimmed.hasPrefix("curl ") || trimmed.hasPrefix("curl\t") || trimmed.hasPrefix("curl\n")
         }
     }
 }
