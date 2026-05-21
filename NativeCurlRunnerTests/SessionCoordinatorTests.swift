@@ -340,6 +340,96 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(invocations[1].urlString, "https://example.com/original")
     }
 
+    func testRunPreservesRawResponseModeAcrossJSONResponses() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: JSONAwareStubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/first")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        var request = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
+                bodyData: Data("{\"ok\":true}".utf8),
+                mimeType: "application/json",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 100)
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+        coordinator.setResponseMode(.raw)
+
+        coordinator.setURL("https://example.com/second")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        request = await executor.invocations[1]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
+                bodyData: Data("{\"next\":true}".utf8),
+                mimeType: "application/json",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 101)
+            )
+        )
+        await waitUntil { coordinator.state.visibleResponseState?.body.bodyText == "{\"next\":true}" }
+
+        XCTAssertEqual(coordinator.state.currentResponseMode, .raw)
+    }
+
+    func testTreeModeFallsBackToRawForNonJSONResponse() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: JSONAwareStubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/json")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        var request = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
+                bodyData: Data("{\"ok\":true}".utf8),
+                mimeType: "application/json",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 100)
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+        XCTAssertEqual(coordinator.state.currentResponseMode, .tree)
+
+        coordinator.setURL("https://example.com/text")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        request = await executor.invocations[1]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [ResponseHeader(name: "Content-Type", value: "text/plain")],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 101)
+            )
+        )
+        await waitUntil { coordinator.state.visibleResponseState?.body.bodyText == "ok" }
+
+        XCTAssertEqual(coordinator.state.currentResponseMode, .raw)
+    }
+
     func testRerunIsUnavailableBeforeFirstDispatchAndWhileRunning() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(
@@ -501,6 +591,32 @@ private struct StubResponseFormatter: ResponseFormatting {
                 exportFilename: "response.txt"
             ),
             selectedMode: .raw,
+            isStale: false
+        )
+    }
+}
+
+private struct JSONAwareStubResponseFormatter: ResponseFormatting {
+    func format(_ response: ExecutedResponse) async -> VisibleResponseState {
+        let isJSON = response.mimeType?.localizedCaseInsensitiveContains("json") == true
+        return VisibleResponseState(
+            summary: ResponseSummary(
+                statusCode: response.statusCode,
+                durationDescription: "10 ms",
+                sizeDescription: "\(response.bodyData.count) B",
+                timestampDescription: "12:00:00 PM",
+                tone: .success
+            ),
+            body: ResponseBody(
+                headerText: response.headers.map { "\($0.name): \($0.value)" }.joined(separator: "\n"),
+                bodyText: String(data: response.bodyData, encoding: .utf8) ?? "",
+                isPreviewable: true,
+                rawData: response.bodyData,
+                mimeType: response.mimeType,
+                jsonValue: isJSON ? .object([("ok", .bool(true))]) : nil,
+                exportFilename: "response.txt"
+            ),
+            selectedMode: isJSON ? .tree : .raw,
             isStale: false
         )
     }

@@ -137,22 +137,7 @@ struct WorkspaceRootView: View {
                     .padding(14)
                 }
 
-                GroupBox {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Body")
-                            .font(.headline)
-
-                        TextEditor(text: bodyBinding)
-                            .font(.body.monospaced())
-                            .frame(minHeight: 220)
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color(nsColor: .textBackgroundColor))
-                            )
-                    }
-                    .padding(14)
-                }
+                RequestBodySection(bodyText: bodyBinding, isJSONBody: requestBodyIsJSON)
             }
             .padding(20)
         }
@@ -165,7 +150,7 @@ struct WorkspaceRootView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Response")
                         .font(.title3.weight(.semibold))
-                    Text("Inspect the last response in a structured tree or raw body view.")
+                    Text("Inspect the last response in a formatted JSON or raw body view.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -230,8 +215,14 @@ struct WorkspaceRootView: View {
 
     @ViewBuilder
     private var responseContent: some View {
-        if let jsonValue = coordinator.state.responseJSONValue, coordinator.state.currentResponseMode == .tree {
-            JSONRootView(jsonValue: jsonValue)
+        if coordinator.state.responseJSONValue != nil, coordinator.state.currentResponseMode == .tree {
+            JSONEditorPanel(
+                text: .constant(coordinator.state.responseBodyText),
+                isEditable: false,
+                showsValidation: false,
+                minHeight: 360,
+                accessibilityIdentifier: "response-json-pretty"
+            )
         } else if coordinator.state.hasVisibleResponse {
             ScrollView {
                 if coordinator.state.responseBodyIsPreviewable {
@@ -295,6 +286,23 @@ struct WorkspaceRootView: View {
 
     private func processURLFieldInput(_ text: String) {
         coordinator.handleURLBarTextChange(text)
+    }
+
+    private var requestBodyIsJSON: Bool {
+        let bodyText = coordinator.state.workspaceRequest.body.textValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bodyText.isEmpty else {
+            return true
+        }
+
+        if bodyText.hasPrefix("{") || bodyText.hasPrefix("[") {
+            return true
+        }
+
+        return coordinator.state.workspaceRequest.headers.contains { header in
+            header.isEnabled &&
+            header.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Content-Type") == .orderedSame &&
+            header.value.localizedCaseInsensitiveContains("json")
+        }
     }
 }
 
@@ -415,6 +423,57 @@ private struct HeaderRowView: View {
             .foregroundStyle(.secondary)
         }
         .opacity(header.isEnabled ? 1 : 0.55)
+    }
+}
+
+private struct RequestBodySection: View {
+    @Binding var bodyText: String
+    let isJSONBody: Bool
+
+    var bodyContent: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Body")
+                        .font(.headline)
+                    Spacer()
+                    Text(isJSONBody ? "JSON" : "Raw")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule(style: .continuous)
+                                .fill(Color(nsColor: .controlBackgroundColor))
+                        )
+                }
+
+                if isJSONBody {
+                    JSONEditorPanel(
+                        text: $bodyText,
+                        isEditable: true,
+                        showsValidation: true,
+                        minHeight: 240,
+                        accessibilityIdentifier: "request-json-body-editor"
+                    )
+                } else {
+                    TextEditor(text: $bodyText)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 220)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                        )
+                        .accessibilityIdentifier("request-raw-body-editor")
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    var body: some View {
+        bodyContent
     }
 }
 

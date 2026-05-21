@@ -17,12 +17,17 @@
 		A00000010000000000000009 /* URLInputField.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000010 /* URLInputField.swift */; };
 		A00000010000000000000010 /* RequestExecuting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000011 /* RequestExecuting.swift */; };
 		A00000010000000000000011 /* ResponseFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000012 /* ResponseFormatting.swift */; };
+		A00000010000000000000012 /* JSONEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000014 /* JSONEditing.swift */; };
+		A00000010000000000000013 /* JSONCodeEditorTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000015 /* JSONCodeEditorTextKit.swift */; };
+		A00000010000000000000014 /* JSONCodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000016 /* JSONCodeEditorView.swift */; };
 		B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* SessionCoordinatorTests.swift */; };
 		B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000002 /* SimpleCurlImporterTests.swift */; };
 		B00000010000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
 		B00000010000000000000004 /* RequestValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000005 /* RequestValidationTests.swift */; };
 		B00000010000000000000005 /* RequestExecutorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000006 /* RequestExecutorTests.swift */; };
 		B00000010000000000000006 /* ResponseFormatterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000007 /* ResponseFormatterTests.swift */; };
+		B00000010000000000000007 /* JSONEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000008 /* JSONEditingTests.swift */; };
+		B00000010000000000000008 /* JSONTextKitFoldingSpikeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */; };
 		C00000010000000000000001 /* URLBarImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* URLBarImportUITests.swift */; };
 		C00000010000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
 /* End PBXBuildFile section */
@@ -57,6 +62,9 @@
 		A00000110000000000000011 /* RequestExecuting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecuting.swift; sourceTree = "<group>"; };
 		A00000110000000000000012 /* ResponseFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseFormatting.swift; sourceTree = "<group>"; };
 		A00000110000000000000013 /* NativeCurlRunner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NativeCurlRunner.entitlements; sourceTree = "<group>"; };
+		A00000110000000000000014 /* JSONEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONEditing.swift; sourceTree = "<group>"; };
+		A00000110000000000000015 /* JSONCodeEditorTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorTextKit.swift; sourceTree = "<group>"; };
+		A00000110000000000000016 /* JSONCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorView.swift; sourceTree = "<group>"; };
 		B00000110000000000000001 /* SessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinatorTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000002 /* SimpleCurlImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporterTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000003 /* NativeCurlRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -64,6 +72,8 @@
 		B00000110000000000000005 /* RequestValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestValidationTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000006 /* RequestExecutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecutorTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000007 /* ResponseFormatterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseFormatterTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000008 /* JSONEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONEditingTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONTextKitFoldingSpikeTests.swift; sourceTree = "<group>"; };
 		C00000110000000000000001 /* URLBarImportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLBarImportUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -167,6 +177,8 @@
 				A00000110000000000000005 /* WorkspaceRootView.swift */,
 				A00000110000000000000006 /* MenuBarView.swift */,
 				A00000110000000000000010 /* URLInputField.swift */,
+				A00000110000000000000015 /* JSONCodeEditorTextKit.swift */,
+				A00000110000000000000016 /* JSONCodeEditorView.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -178,6 +190,7 @@
 				A00000110000000000000009 /* SimpleCurlImporter.swift */,
 				A00000110000000000000011 /* RequestExecuting.swift */,
 				A00000110000000000000012 /* ResponseFormatting.swift */,
+				A00000110000000000000014 /* JSONEditing.swift */,
 			);
 			path = Infrastructure;
 			sourceTree = "<group>";
@@ -190,6 +203,8 @@
 				B00000110000000000000007 /* ResponseFormatterTests.swift */,
 				B00000110000000000000001 /* SessionCoordinatorTests.swift */,
 				B00000110000000000000002 /* SimpleCurlImporterTests.swift */,
+				B00000110000000000000008 /* JSONEditingTests.swift */,
+				B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */,
 			);
 			path = NativeCurlRunnerTests;
 			sourceTree = "<group>";
@@ -320,6 +335,9 @@
 				A00000010000000000000009 /* URLInputField.swift in Sources */,
 				A00000010000000000000010 /* RequestExecuting.swift in Sources */,
 				A00000010000000000000011 /* ResponseFormatting.swift in Sources */,
+				A00000010000000000000012 /* JSONEditing.swift in Sources */,
+				A00000010000000000000013 /* JSONCodeEditorTextKit.swift in Sources */,
+				A00000010000000000000014 /* JSONCodeEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -332,6 +350,8 @@
 				B00000010000000000000006 /* ResponseFormatterTests.swift in Sources */,
 				B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */,
 				B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */,
+				B00000010000000000000007 /* JSONEditingTests.swift in Sources */,
+				B00000010000000000000008 /* JSONTextKitFoldingSpikeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -194,6 +194,7 @@ final class SessionCoordinator: ObservableObject {
         state.executionState = .running
         clearInlineMessage()
         state.lastExecutedRequest = LastExecutedRequest(request: request)
+        let previousResponseMode = state.visibleResponseState?.selectedMode
 
         currentRunTask = Task { [requestExecutor, responseFormatter] in
             do {
@@ -201,6 +202,9 @@ final class SessionCoordinator: ObservableObject {
                 let formattedResponse = await responseFormatter.format(executedResponse)
                 await MainActor.run {
                     var visibleResponseState = formattedResponse
+                    if let previousResponseMode, previousResponseMode == .raw || visibleResponseState.body.jsonValue != nil {
+                        visibleResponseState.selectedMode = previousResponseMode
+                    }
                     visibleResponseState.isStale = self.state.workspaceRequest != request
                     self.state.visibleResponseState = visibleResponseState
                     self.state.executionState = .succeeded

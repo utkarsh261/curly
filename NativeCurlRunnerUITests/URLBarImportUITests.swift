@@ -225,7 +225,7 @@ final class URLBarImportUITests: XCTestCase {
 
         triggerRun(app)
 
-        XCTAssertTrue(app.scrollViews["response-json-tree"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5))
     }
 
     func testLocalServerPutRawTextCurlRunsAndRendersEchoedBody() async throws {
@@ -238,7 +238,61 @@ final class URLBarImportUITests: XCTestCase {
         defer { app.terminate() }
 
         triggerRun(app)
-        XCTAssertTrue(app.scrollViews["response-json-tree"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5))
+    }
+
+    func testJSONBodyCompactDoesNotCrashOrMoveComments() throws {
+        let (app, _) = launchWithURLBarInput(
+            """
+            curl -X POST https://api.example.com/users \\
+              -H "Content-Type: application/json" \\
+              -d '{"name":"utk"}'
+            """
+        )
+        defer { app.terminate() }
+
+        let compactButton = app.buttons["request-json-body-editor-compact"].firstMatch
+        XCTAssertTrue(compactButton.waitForExistence(timeout: 3))
+        compactButton.click()
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.exists)
+    }
+
+    func testReplacingJSONCurlWorkspaceDoesNotCrash() throws {
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(
+            """
+            curl -X POST https://api.example.com/users \\
+              -H "Content-Type: application/json" \\
+              -d '{"name":"first"}'
+            """,
+            into: urlField
+        )
+        XCTAssertTrue(waitUntil(timeout: 3) { urlField.value as? String == "https://api.example.com/users" })
+
+        paste(
+            """
+            curl -X POST https://api.example.com/projects \\
+              -H "Content-Type: application/json" \\
+              -d '{"name":"second"}'
+            """,
+            into: urlField
+        )
+
+        let replaceButton = app.sheets.buttons["Replace"].firstMatch.exists
+            ? app.sheets.buttons["Replace"].firstMatch
+            : app.dialogs.buttons["Replace"].firstMatch
+        XCTAssertTrue(replaceButton.waitForExistence(timeout: 3))
+        replaceButton.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) {
+                urlField.value as? String == "https://api.example.com/projects"
+            }
+        )
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.exists)
     }
 
     private func launchWithURLBarInput(

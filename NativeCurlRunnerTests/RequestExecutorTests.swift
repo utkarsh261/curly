@@ -34,6 +34,44 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertEqual(sent?.httpBody, Data("{\"name\":\"utk\"}".utf8))
     }
 
+    func testJSONContentTypeStripsCommentsBeforeSendingBody() async throws {
+        let transport = StubTransport(
+            result: .success(
+                (
+                    Data("{\"ok\":true}".utf8),
+                    makeHTTPResponse(statusCode: 200, headers: ["Content-Type": "application/json"])
+                )
+            )
+        )
+        let executor = URLSessionRequestExecutor(transport: transport)
+        let request = Request(
+            method: .post,
+            urlString: "https://example.com/users",
+            headers: [Header(name: "Content-Type", value: "application/json")],
+            body: .text(
+                """
+                {
+                  // local note
+                  "name": "utk"
+                }
+                """
+            )
+        )
+
+        _ = try await executor.execute(request)
+
+        let sent = await transport.capturedRequest
+        XCTAssertEqual(
+            String(data: sent?.httpBody ?? Data(), encoding: .utf8),
+            """
+            {
+              
+              "name": "utk"
+            }
+            """
+        )
+    }
+
     func testInvalidRequestFailsWithoutDispatch() async {
         let transport = StubTransport(result: .failure(ExecutionError.transport("unused")))
         let executor = URLSessionRequestExecutor(transport: transport)

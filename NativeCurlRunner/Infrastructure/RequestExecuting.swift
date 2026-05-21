@@ -81,9 +81,20 @@ struct URLSessionRequestExecutor: RequestExecuting {
         case .none:
             break
         case .text(let text):
-            urlRequest.httpBody = text.data(using: .utf8)
+            let bodyText = request.hasJSONContentType ? JSONCommentStripper.stripComments(from: text) : text
+            urlRequest.httpBody = bodyText.data(using: .utf8)
         }
 
         return urlRequest
+    }
+}
+
+private extension Request {
+    var hasJSONContentType: Bool {
+        headers.contains { header in
+            header.isEnabled &&
+            header.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Content-Type") == .orderedSame &&
+            header.value.localizedCaseInsensitiveContains("json")
+        }
     }
 }

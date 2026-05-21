@@ -124,7 +124,7 @@ struct ResponseSummary: Equatable {
 }
 
 enum ResponseViewMode: String, CaseIterable, Identifiable {
-    case tree = "Tree"
+    case tree = "Pretty"
     case raw = "Raw"
 
     var id: String { rawValue }
