@@ -328,7 +328,9 @@ struct JSONEditorPanel: View {
     }
 
     private func collapseAll() {
-        foldedRanges = JSONFoldIndex.foldRanges(in: text).map(\.fullRange)
+        foldedRanges = JSONFoldIndex.foldRanges(in: text)
+            .filter { $0.depth > 0 }
+            .map(\.fullRange)
     }
 
     private func expandAll() {

@@ -209,7 +209,9 @@ struct WorkspaceRootView: View {
                         if coordinator.state.responseJSONValue != nil,
                            coordinator.state.currentResponseMode == .tree {
                             Button {
-                                responseFoldedRanges = JSONFoldIndex.foldRanges(in: coordinator.state.responseBodyText).map(\.fullRange)
+                                responseFoldedRanges = JSONFoldIndex.foldRanges(in: coordinator.state.responseBodyText)
+                                    .filter { $0.depth > 0 }
+                                    .map(\.fullRange)
                             } label: {
                                 Label("Collapse", systemImage: "arrow.down.right.and.arrow.up.left")
                             }

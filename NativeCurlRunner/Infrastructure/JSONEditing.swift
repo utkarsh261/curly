@@ -219,6 +219,7 @@ struct JSONFoldRange: Equatable {
     var fullRange: NSRange
     var openTokenRange: NSRange
     var closeTokenRange: NSRange
+    var depth: Int
 }
 
 enum JSONFoldIndex {
@@ -266,7 +267,7 @@ enum JSONFoldIndex {
             return
         }
 
-        ranges.append(JSONFoldRange(kind: kind, fullRange: fullRange, openTokenRange: open.tokenRange, closeTokenRange: closeRange))
+        ranges.append(JSONFoldRange(kind: kind, fullRange: fullRange, openTokenRange: open.tokenRange, closeTokenRange: closeRange, depth: stack.count))
     }
 }
 
