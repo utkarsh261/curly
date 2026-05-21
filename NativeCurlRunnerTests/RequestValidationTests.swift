@@ -12,37 +12,22 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertTrue(Request(method: .get, urlString: "http://localhost:3000", headers: [], body: .none).isMinimallyValid)
     }
 
-    func testRejectsEnabledHeadersWithoutNames() {
-        let invalid = Request(
+    func testSkipsEnabledHeadersWithoutNames() {
+        let request = Request(
             method: .get,
             urlString: "https://example.com",
             headers: [Header(name: "", value: "token", isEnabled: true)],
             body: .none
         )
-        let validDisabled = Request(
-            method: .get,
-            urlString: "https://example.com",
-            headers: [Header(name: "", value: "token", isEnabled: false)],
-            body: .none
-        )
 
-        XCTAssertFalse(invalid.isMinimallyValid)
-        XCTAssertTrue(validDisabled.isMinimallyValid)
+        XCTAssertTrue(request.isMinimallyValid)
+        XCTAssertNil(request.lightweightValidationMessage)
     }
 
     func testLightweightValidationMessageExplainsCurrentEditingIssue() {
         XCTAssertEqual(
             Request(method: .get, urlString: "localhost:3000", headers: [], body: .none).lightweightValidationMessage,
             "Use an absolute http or https URL."
-        )
-        XCTAssertEqual(
-            Request(
-                method: .get,
-                urlString: "https://example.com",
-                headers: [Header(name: "", value: "token", isEnabled: true)],
-                body: .none
-            ).lightweightValidationMessage,
-            "Enabled header rows need a header name."
         )
     }
 }

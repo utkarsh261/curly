@@ -72,7 +72,7 @@ struct URLSessionRequestExecutor: RequestExecuting {
         for header in request.headers where header.isEnabled {
             let trimmedName = header.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedName.isEmpty else {
-                throw ExecutionError.invalidRequest("Enabled header rows need a header name.")
+                continue
             }
             urlRequest.setValue(header.value, forHTTPHeaderField: trimmedName)
         }

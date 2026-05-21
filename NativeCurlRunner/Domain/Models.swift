@@ -77,10 +77,6 @@ struct Request: Equatable, Codable {
             return "The URL needs a host before it can run."
         }
 
-        if headers.contains(where: { $0.isEnabled && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
-            return "Enabled header rows need a header name."
-        }
-
         return nil
     }
 
