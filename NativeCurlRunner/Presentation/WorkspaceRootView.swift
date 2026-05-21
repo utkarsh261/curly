@@ -115,10 +115,13 @@ struct WorkspaceRootView: View {
                                 Text("Headers")
                                     .font(.headline)
                                 Spacer()
-                                Button("Add Header") {
+                                Button {
                                     coordinator.addHeader()
+                                } label: {
+                                    Label("Add", systemImage: "plus")
                                 }
-                                .buttonStyle(.bordered)
+                                .labelStyle(.iconOnly)
+                                .help("Add a header")
                             }
 
                             if coordinator.state.workspaceRequest.headers.isEmpty {
