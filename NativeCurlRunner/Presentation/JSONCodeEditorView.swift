@@ -88,6 +88,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
             textView.selectedRanges = selectedRanges
             context.coordinator.isProgrammaticUpdate = false
             context.coordinator.applyHighlighting(to: textView)
+            context.coordinator.rulerView?.invalidateFoldCache()
         }
 
         textView.isEditable = isEditable
@@ -118,6 +119,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
                 return
             }
 
+            rulerView?.invalidateFoldCache()
             text.wrappedValue = textView.string
             foldedRanges.wrappedValue = validFoldedRanges(in: textView.string)
             applyHighlighting(to: textView)
@@ -173,29 +175,31 @@ struct JSONCodeEditorView: NSViewRepresentable {
             isApplyingHighlighting = true
             defer { isApplyingHighlighting = false }
 
-            let source = textView.string as NSString
-            let fullRange = NSRange(location: 0, length: source.length)
-            let selectedRanges = textView.selectedRanges
+            autoreleasepool {
+                let source = textView.string as NSString
+                let fullRange = NSRange(location: 0, length: source.length)
+                let selectedRanges = textView.selectedRanges
 
-            let storage = textView.textStorage
-            storage?.beginEditing()
-            storage?.setAttributes(baseAttributes, range: fullRange)
+                let storage = textView.textStorage
+                storage?.beginEditing()
+                storage?.setAttributes(baseAttributes, range: fullRange)
 
-            for token in JSONLexer.tokenize(textView.string) {
-                guard token.range.location != NSNotFound, NSMaxRange(token.range) <= source.length else {
-                    continue
+                for token in JSONLexer.tokenize(textView.string) {
+                    guard token.range.location != NSNotFound, NSMaxRange(token.range) <= source.length else {
+                        continue
+                    }
+                    storage?.addAttributes(attributes(for: token.kind), range: token.range)
                 }
-                storage?.addAttributes(attributes(for: token.kind), range: token.range)
-            }
 
-            storage?.endEditing()
-            let currentLength = (textView.string as NSString).length
-            let safeRanges = selectedRanges.compactMap { value -> NSValue? in
-                let range = value.rangeValue
-                guard range.location <= currentLength else { return nil }
-                return NSValue(range: NSRange(location: range.location, length: min(range.length, currentLength - range.location)))
+                storage?.endEditing()
+                let currentLength = (textView.string as NSString).length
+                let safeRanges = selectedRanges.compactMap { value -> NSValue? in
+                    let range = value.rangeValue
+                    guard range.location <= currentLength else { return nil }
+                    return NSValue(range: NSRange(location: range.location, length: min(range.length, currentLength - range.location)))
+                }
+                textView.selectedRanges = safeRanges.isEmpty ? [NSValue(range: NSRange(location: 0, length: 0))] : safeRanges
             }
-            textView.selectedRanges = safeRanges.isEmpty ? [NSValue(range: NSRange(location: 0, length: 0))] : safeRanges
         }
 
         private var baseAttributes: [NSAttributedString.Key: Any] {

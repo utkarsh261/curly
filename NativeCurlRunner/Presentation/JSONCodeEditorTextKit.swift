@@ -61,6 +61,15 @@ final class JSONLineNumberRulerView: NSRulerView {
         .foregroundColor: themeAccentNS
     ]
 
+    var cachedFoldStartLines: Set<Int>?
+    var cachedLineMap: JSONLineMap?
+
+    func invalidateFoldCache() {
+        cachedFoldStartLines = nil
+        cachedLineMap = nil
+        needsDisplay = true
+    }
+
     init(textView: NSTextView) {
         self.observedTextView = textView
         super.init(scrollView: textView.enclosingScrollView, orientation: .verticalRuler)
@@ -86,8 +95,21 @@ final class JSONLineNumberRulerView: NSRulerView {
         bounds.fill()
 
         let text = textView.string
-        let lineMap = JSONLineMap(text: text)
-        let foldStartLines = Set(JSONFoldIndex.foldRanges(in: text).map { lineMap.lineNumber(at: $0.openTokenRange.location) })
+        let lineMap: JSONLineMap
+        if let existing = cachedLineMap {
+            lineMap = existing
+        } else {
+            lineMap = JSONLineMap(text: text)
+            cachedLineMap = lineMap
+        }
+
+        let foldStartLines: Set<Int>
+        if let cached = cachedFoldStartLines {
+            foldStartLines = cached
+        } else {
+            foldStartLines = Set(JSONFoldIndex.foldRanges(in: text).map { lineMap.lineNumber(at: $0.openTokenRange.location) })
+            cachedFoldStartLines = foldStartLines
+        }
         let visibleRect = textView.visibleRect
         let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
 

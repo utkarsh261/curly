@@ -115,4 +115,41 @@ final class JSONEditingTests: XCTestCase {
             text
         )
     }
+
+    func testLexerHandlesBooleansAndNullLiteralsAndEdgeCases() {
+        // Test standard literals
+        let tokens1 = JSONLexer.tokenize("true false null")
+        XCTAssertEqual(tokens1.count, 5) // true, space, false, space, null
+        XCTAssertEqual(tokens1[0].kind, .boolLiteral)
+        XCTAssertEqual(tokens1[0].range, NSRange(location: 0, length: 4))
+        XCTAssertEqual(tokens1[2].kind, .boolLiteral)
+        XCTAssertEqual(tokens1[2].range, NSRange(location: 5, length: 5))
+        XCTAssertEqual(tokens1[4].kind, .nullLiteral)
+        XCTAssertEqual(tokens1[4].range, NSRange(location: 11, length: 4))
+
+        // Test boundary / prefix edge cases (none of these should match as literals, but as individual chars / others)
+        let tokens2 = JSONLexer.tokenize("tru fals nul")
+        // "tru" -> 't', 'r', 'u' (each as .other)
+        XCTAssertEqual(tokens2.filter { $0.kind == .boolLiteral || $0.kind == .nullLiteral }.count, 0)
+
+        // Test trailing characters (prefix scanning behavior of the lexer)
+        let tokens3 = JSONLexer.tokenize("truea falseb nullc")
+        XCTAssertEqual(tokens3.count, 8)
+        XCTAssertEqual(tokens3[0].kind, .boolLiteral)
+        XCTAssertEqual(tokens3[0].range, NSRange(location: 0, length: 4))
+        XCTAssertEqual(tokens3[1].kind, .other)
+        XCTAssertEqual(tokens3[3].kind, .boolLiteral)
+        XCTAssertEqual(tokens3[3].range, NSRange(location: 6, length: 5))
+        XCTAssertEqual(tokens3[4].kind, .other)
+        XCTAssertEqual(tokens3[6].kind, .nullLiteral)
+        XCTAssertEqual(tokens3[6].range, NSRange(location: 13, length: 4))
+        XCTAssertEqual(tokens3[7].kind, .other)
+
+        // Test literals inside strings (should be treated as string content only)
+        let tokens4 = JSONLexer.tokenize(##"{"a": true, "b": "true"}"##)
+        // Expected string tokens: "a", "true" (under "b")
+        XCTAssertEqual(tokens4.filter { $0.kind == .string }.count, 3) // "a", "b", "true"
+        XCTAssertEqual(tokens4.filter { $0.kind == .boolLiteral }.count, 1) // the unquoted true
+    }
 }
+

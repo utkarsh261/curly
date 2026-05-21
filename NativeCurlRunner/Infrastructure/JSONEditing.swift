@@ -115,13 +115,23 @@ enum JSONLexer {
                     index += 1
                 }
                 tokens.append(JSONToken(kind: .number, range: NSRange(location: start, length: index - start)))
-            case 0x74 where source.substring(with: NSRange(location: index, length: min(4, source.length - index))) == "true":
+            case 0x74 where index + 3 < source.length &&
+                source.character(at: index + 1) == 0x72 &&
+                source.character(at: index + 2) == 0x75 &&
+                source.character(at: index + 3) == 0x65:
                 tokens.append(JSONToken(kind: .boolLiteral, range: NSRange(location: index, length: 4)))
                 index += 4
-            case 0x66 where source.substring(with: NSRange(location: index, length: min(5, source.length - index))) == "false":
+            case 0x66 where index + 4 < source.length &&
+                source.character(at: index + 1) == 0x61 &&
+                source.character(at: index + 2) == 0x6C &&
+                source.character(at: index + 3) == 0x73 &&
+                source.character(at: index + 4) == 0x65:
                 tokens.append(JSONToken(kind: .boolLiteral, range: NSRange(location: index, length: 5)))
                 index += 5
-            case 0x6E where source.substring(with: NSRange(location: index, length: min(4, source.length - index))) == "null":
+            case 0x6E where index + 3 < source.length &&
+                source.character(at: index + 1) == 0x75 &&
+                source.character(at: index + 2) == 0x6C &&
+                source.character(at: index + 3) == 0x6C:
                 tokens.append(JSONToken(kind: .nullLiteral, range: NSRange(location: index, length: 4)))
                 index += 4
             default:
@@ -145,11 +155,13 @@ enum JSONLexer {
 
 enum JSONCommentStripper {
     static func stripComments(from text: String) -> String {
-        let mutable = NSMutableString(string: text)
-        for token in JSONLexer.tokenize(text).reversed() where token.kind == .lineComment || token.kind == .blockComment {
-            mutable.deleteCharacters(in: token.range)
+        autoreleasepool {
+            let mutable = NSMutableString(string: text)
+            for token in JSONLexer.tokenize(text).reversed() where token.kind == .lineComment || token.kind == .blockComment {
+                mutable.deleteCharacters(in: token.range)
+            }
+            return mutable as String
         }
-        return mutable as String
     }
 }
 
@@ -160,43 +172,47 @@ struct JSONValidationResult: Equatable {
 
 enum JSONValidator {
     static func validate(_ text: String) -> JSONValidationResult {
-        if JSONTrailingCommaDetector.hasTrailingComma(in: text) {
-            return JSONValidationResult(isValid: false, errorMessage: "JSON cannot contain trailing commas.")
-        }
+        autoreleasepool {
+            if JSONTrailingCommaDetector.hasTrailingComma(in: text) {
+                return JSONValidationResult(isValid: false, errorMessage: "JSON cannot contain trailing commas.")
+            }
 
-        let stripped = JSONCommentStripper.stripComments(from: text)
-        guard let data = stripped.data(using: .utf8) else {
-            return JSONValidationResult(isValid: false, errorMessage: "The JSON body is not valid UTF-8.")
-        }
+            let stripped = JSONCommentStripper.stripComments(from: text)
+            guard let data = stripped.data(using: .utf8) else {
+                return JSONValidationResult(isValid: false, errorMessage: "The JSON body is not valid UTF-8.")
+            }
 
-        do {
-            _ = try JSONSerialization.jsonObject(with: data)
-            return JSONValidationResult(isValid: true, errorMessage: nil)
-        } catch {
-            return JSONValidationResult(isValid: false, errorMessage: error.localizedDescription)
+            do {
+                _ = try JSONSerialization.jsonObject(with: data)
+                return JSONValidationResult(isValid: true, errorMessage: nil)
+            } catch {
+                return JSONValidationResult(isValid: false, errorMessage: error.localizedDescription)
+            }
         }
     }
 }
 
 enum JSONTrailingCommaDetector {
     static func hasTrailingComma(in text: String) -> Bool {
-        var previousSignificantToken: JSONToken?
+        autoreleasepool {
+            var previousSignificantToken: JSONToken?
 
-        for token in JSONLexer.tokenize(text) {
-            switch token.kind {
-            case .whitespace, .lineComment, .blockComment:
-                continue
-            case .rightBrace, .rightBracket:
-                if previousSignificantToken?.kind == .comma {
-                    return true
+            for token in JSONLexer.tokenize(text) {
+                switch token.kind {
+                case .whitespace, .lineComment, .blockComment:
+                    continue
+                case .rightBrace, .rightBracket:
+                    if previousSignificantToken?.kind == .comma {
+                        return true
+                    }
+                    previousSignificantToken = token
+                default:
+                    previousSignificantToken = token
                 }
-                previousSignificantToken = token
-            default:
-                previousSignificantToken = token
             }
-        }
 
-        return false
+            return false
+        }
     }
 }
 
@@ -329,35 +345,37 @@ enum JSONFormatter {
     }
 
     private static func transform(_ text: String, indentation: Int, style: Style) throws -> String {
-        let validation = JSONValidator.validate(text)
-        guard validation.isValid else {
-            throw FormattingError.invalidJSON(validation.errorMessage ?? "The JSON body is invalid.")
-        }
+        try autoreleasepool {
+            let validation = JSONValidator.validate(text)
+            guard validation.isValid else {
+                throw FormattingError.invalidJSON(validation.errorMessage ?? "The JSON body is invalid.")
+            }
 
-        let commentLines = fullLineCommentPlacements(in: text)
-        let stripped = JSONCommentStripper.stripComments(from: text)
-        guard let data = stripped.data(using: .utf8) else {
-            throw CocoaError(.fileReadInapplicableStringEncoding)
-        }
+            let commentLines = fullLineCommentPlacements(in: text)
+            let stripped = JSONCommentStripper.stripComments(from: text)
+            guard let data = stripped.data(using: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
 
-        let object = try JSONSerialization.jsonObject(with: data)
-        let output: String
-        switch style {
-        case .pretty:
-            output = try renderPretty(object, indentation: indentation)
-        case .compact:
-            output = commentLines.isEmpty ? try renderCompact(object) : text
-        }
+            let object = try JSONSerialization.jsonObject(with: data)
+            let output: String
+            switch style {
+            case .pretty:
+                output = try renderPretty(object, indentation: indentation)
+            case .compact:
+                output = commentLines.isEmpty ? try renderCompact(object) : text
+            }
 
-        guard !commentLines.isEmpty else {
-            return output
-        }
+            guard !commentLines.isEmpty else {
+                return output
+            }
 
-        switch style {
-        case .pretty:
-            return insertCommentLines(commentLines, into: output)
-        case .compact:
-            return output
+            switch style {
+            case .pretty:
+                return insertCommentLines(commentLines, into: output)
+            case .compact:
+                return output
+            }
         }
     }
 
