@@ -2,6 +2,7 @@ import Foundation
 
 enum HTTPMethod: String, CaseIterable, Codable, Identifiable {
     case get = "GET"
+    case head = "HEAD"
     case post = "POST"
     case put = "PUT"
     case patch = "PATCH"
@@ -224,6 +225,30 @@ enum ExecutionError: LocalizedError, Equatable {
 struct ReplaceConfirmationState: Equatable {
     var rawInput: String
     var candidateRequest: Request
+    var candidateWarnings: [String]
+    var sourceCurl: String?
+
+    init(
+        rawInput: String,
+        candidateRequest: Request,
+        candidateWarnings: [String] = [],
+        sourceCurl: String? = nil
+    ) {
+        self.rawInput = rawInput
+        self.candidateRequest = candidateRequest
+        self.candidateWarnings = candidateWarnings
+        self.sourceCurl = sourceCurl
+    }
+}
+
+enum InlineMessageSeverity: Equatable {
+    case warning
+    case error
+}
+
+struct InlineMessage: Equatable {
+    var severity: InlineMessageSeverity
+    var text: String
 }
 
 struct SessionState: Equatable {
@@ -232,8 +257,27 @@ struct SessionState: Equatable {
     var executionState: ExecutionState
     var visibleResponseState: VisibleResponseState?
     var replaceConfirmationState: ReplaceConfirmationState?
-    var inlineErrorMessage: String?
+    var inlineMessage: InlineMessage?
     var isWindowVisible: Bool
+
+    init(
+        workspaceRequest: Request,
+        lastExecutedRequest: LastExecutedRequest?,
+        executionState: ExecutionState,
+        visibleResponseState: VisibleResponseState?,
+        replaceConfirmationState: ReplaceConfirmationState?,
+        inlineMessage: InlineMessage? = nil,
+        inlineErrorMessage: String? = nil,
+        isWindowVisible: Bool
+    ) {
+        self.workspaceRequest = workspaceRequest
+        self.lastExecutedRequest = lastExecutedRequest
+        self.executionState = executionState
+        self.visibleResponseState = visibleResponseState
+        self.replaceConfirmationState = replaceConfirmationState
+        self.inlineMessage = inlineMessage ?? inlineErrorMessage.map { InlineMessage(severity: .error, text: $0) }
+        self.isWindowVisible = isWindowVisible
+    }
 
     static let initial = SessionState(
         workspaceRequest: .empty,
@@ -241,12 +285,22 @@ struct SessionState: Equatable {
         executionState: .idle,
         visibleResponseState: nil,
         replaceConfirmationState: nil,
-        inlineErrorMessage: nil,
         isWindowVisible: true
     )
 
     var requestIssueMessage: String? {
-        inlineErrorMessage ?? workspaceRequest.lightweightValidationMessage
+        inlineMessage?.text ?? workspaceRequest.lightweightValidationMessage
+    }
+
+    var requestIssueSeverity: InlineMessageSeverity {
+        inlineMessage?.severity ?? .error
+    }
+
+    var inlineErrorMessage: String? {
+        guard inlineMessage?.severity == .error else {
+            return nil
+        }
+        return inlineMessage?.text
     }
 
     var canRun: Bool {
@@ -282,7 +336,7 @@ struct SessionState: Equatable {
         case .succeeded:
             return "Last request completed."
         case .failed:
-            return inlineErrorMessage ?? "Last request failed."
+            return inlineMessage?.text ?? "Last request failed."
         }
     }
 
@@ -419,7 +473,7 @@ struct SessionState: Equatable {
         case .succeeded:
             return "Switch between tree and raw modes to inspect the last response."
         case .failed:
-            return inlineErrorMessage ?? "The last request failed before a response could be rendered."
+            return inlineMessage?.text ?? "The last request failed before a response could be rendered."
         }
     }
 }

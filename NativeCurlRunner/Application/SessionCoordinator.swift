@@ -7,7 +7,6 @@ final class SessionCoordinator: ObservableObject {
     private let requestExecutor: RequestExecuting
     private let responseFormatter: ResponseFormatting
     private var currentRunTask: Task<Void, Never>?
-    private var lastHandledURLBarCurlInput: String?
 
     @Published private(set) var state: SessionState = .initial
 
@@ -31,7 +30,7 @@ final class SessionCoordinator: ObservableObject {
         state.executionState = .idle
         state.visibleResponseState = nil
         state.replaceConfirmationState = nil
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
     }
 
     func setWindowVisible(_ isVisible: Bool) {
@@ -44,40 +43,29 @@ final class SessionCoordinator: ObservableObject {
 
     func setMethod(_ method: HTTPMethod) {
         state.workspaceRequest.method = method
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
     func setURL(_ url: String) {
         state.workspaceRequest.urlString = url
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
     func handleURLBarTextChange(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("curl ") {
-            guard lastHandledURLBarCurlInput != trimmed else {
-                return
-            }
-            lastHandledURLBarCurlInput = trimmed
-            handleURLBarPaste(text)
-            return
-        }
-
-        lastHandledURLBarCurlInput = nil
         setURL(text)
     }
 
     func setBody(_ text: String) {
         state.workspaceRequest.body = text.isEmpty ? .none : .text(text)
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
     func addHeader() {
         state.workspaceRequest.headers.append(Header())
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
@@ -96,13 +84,13 @@ final class SessionCoordinator: ObservableObject {
             state.workspaceRequest.headers[index].isEnabled = isEnabled
         }
 
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
     func removeHeader(id: UUID) {
         state.workspaceRequest.headers.removeAll { $0.id == id }
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         markResultStaleIfNeeded()
     }
 
@@ -123,35 +111,36 @@ final class SessionCoordinator: ObservableObject {
         }
 
         do {
-            let candidateRequest = try curlImporter.parse(trimmed)
+            let importResult = try curlImporter.parse(trimmed)
 
             if state.workspaceRequest.isEffectivelyEmpty {
-                applyImportedRequest(candidateRequest)
+                applyImportedResult(importResult)
             } else {
                 state.replaceConfirmationState = ReplaceConfirmationState(
                     rawInput: trimmed,
-                    candidateRequest: candidateRequest
+                    candidateRequest: importResult.request,
+                    candidateWarnings: importResult.warnings,
+                    sourceCurl: importResult.sourceCurl
                 )
+                clearInlineMessage()
             }
-
-            state.inlineErrorMessage = nil
         } catch let error as CurlImportError {
-            state.inlineErrorMessage = error.localizedDescription
+            setInlineError(error.localizedDescription)
         } catch {
-            state.inlineErrorMessage = error.localizedDescription
+            setInlineError(error.localizedDescription)
         }
     }
 
     func confirmWorkspaceReplacement() {
         guard let replacement = state.replaceConfirmationState else { return }
         applyImportedRequest(replacement.candidateRequest)
+        setInlineWarnings(replacement.candidateWarnings)
         state.replaceConfirmationState = nil
-        state.inlineErrorMessage = nil
     }
 
     func cancelWorkspaceReplacement() {
         state.replaceConfirmationState = nil
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
     }
 
     func runCurrentRequest() {
@@ -181,9 +170,9 @@ final class SessionCoordinator: ObservableObject {
 
         do {
             try body.rawData.write(to: url)
-            state.inlineErrorMessage = nil
+            clearInlineMessage()
         } catch {
-            state.inlineErrorMessage = "Could not export the response body: \(error.localizedDescription)"
+            setInlineError("Could not export the response body: \(error.localizedDescription)")
         }
     }
 
@@ -194,12 +183,12 @@ final class SessionCoordinator: ObservableObject {
 
         guard request.isMinimallyValid else {
             state.executionState = .failed
-            state.inlineErrorMessage = request.lightweightValidationMessage ?? "The request is not runnable yet."
+            setInlineError(request.lightweightValidationMessage ?? "The request is not runnable yet.")
             return
         }
 
         state.executionState = .running
-        state.inlineErrorMessage = nil
+        clearInlineMessage()
         state.lastExecutedRequest = LastExecutedRequest(request: request)
 
         currentRunTask = Task { [requestExecutor, responseFormatter] in
@@ -211,19 +200,19 @@ final class SessionCoordinator: ObservableObject {
                     visibleResponseState.isStale = self.state.workspaceRequest != request
                     self.state.visibleResponseState = visibleResponseState
                     self.state.executionState = .succeeded
-                    self.state.inlineErrorMessage = nil
+                    self.clearInlineMessage()
                     self.currentRunTask = nil
                 }
             } catch let error as ExecutionError {
                 await MainActor.run {
                     self.state.executionState = .failed
-                    self.state.inlineErrorMessage = error.localizedDescription
+                    self.setInlineError(error.localizedDescription)
                     self.currentRunTask = nil
                 }
             } catch {
                 await MainActor.run {
                     self.state.executionState = .failed
-                    self.state.inlineErrorMessage = error.localizedDescription
+                    self.setInlineError(error.localizedDescription)
                     self.currentRunTask = nil
                 }
             }
@@ -242,5 +231,26 @@ final class SessionCoordinator: ObservableObject {
     private func applyImportedRequest(_ request: Request) {
         state.workspaceRequest = request
         markResultStaleIfNeeded()
+    }
+
+    private func applyImportedResult(_ result: CurlImportResult) {
+        applyImportedRequest(result.request)
+        setInlineWarnings(result.warnings)
+    }
+
+    private func setInlineWarnings(_ warnings: [String]) {
+        if warnings.isEmpty {
+            clearInlineMessage()
+        } else {
+            state.inlineMessage = InlineMessage(severity: .warning, text: warnings.joined(separator: "\n"))
+        }
+    }
+
+    private func setInlineError(_ message: String) {
+        state.inlineMessage = InlineMessage(severity: .error, text: message)
+    }
+
+    private func clearInlineMessage() {
+        state.inlineMessage = nil
     }
 }

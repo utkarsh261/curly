@@ -23,6 +23,12 @@ enum CurlImportError: LocalizedError, Equatable {
     }
 }
 
+struct CurlImportResult: Equatable {
+    var request: Request
+    var warnings: [String]
+    var sourceCurl: String
+}
+
 protocol CurlImporting {
-    func parse(_ rawInput: String) throws -> Request
+    func parse(_ rawInput: String) throws -> CurlImportResult
 }

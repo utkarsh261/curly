@@ -53,7 +53,7 @@ struct NativeCurlRunnerApp: App {
         }
 
         didApplyUITestURLBarInput = true
-        coordinator.handleURLBarTextChange(arguments[index + 1])
+        coordinator.handleURLBarPaste(arguments[index + 1])
     }
 #endif
 }

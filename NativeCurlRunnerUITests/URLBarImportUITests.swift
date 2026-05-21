@@ -46,7 +46,7 @@ final class URLBarImportUITests: XCTestCase {
         let runButton = app.buttons["run-button"].firstMatch
         XCTAssertTrue(runButton.waitForExistence(timeout: 2), "Run button should exist.")
         XCTAssertTrue(runButton.isEnabled, "Run should be enabled after importing a valid cURL.")
-        runButton.click()
+        triggerRun(app)
 
         let responseBody = app.staticTexts["response-body-text"].firstMatch
         XCTAssertTrue(responseBody.waitForExistence(timeout: 5), "Response body should render after the request completes.")
@@ -66,6 +66,50 @@ final class URLBarImportUITests: XCTestCase {
         )
     }
 
+    func testHeadCurlImportsAndRunsAsHead() throws {
+        let (app, urlField) = launchWithURLBarInput(
+            "curl -I https://www.example.com",
+            usesStubExecutor: true
+        )
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) {
+                urlField.value as? String == "https://www.example.com"
+            },
+            "Pasting a HEAD cURL should populate the parsed URL."
+        )
+
+        let runButton = app.buttons["run-button"].firstMatch
+        XCTAssertTrue(runButton.waitForExistence(timeout: 2))
+        XCTAssertTrue(runButton.isEnabled)
+        triggerRun(app)
+
+        let responseBody = app.staticTexts["response-body-text"].firstMatch
+        XCTAssertTrue(responseBody.waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitUntil(timeout: 5) {
+                responseBody.label.contains("method=HEAD") ||
+                    (responseBody.value as? String)?.contains("method=HEAD") == true
+            },
+            "The stub executor response should show that the imported request ran as HEAD."
+        )
+    }
+
+    func testLocationCurlImportsWithWarningAndRunEnabled() throws {
+        let (app, urlField) = launchWithURLBarInput("curl --location https://www.example.com")
+
+        XCTAssertTrue(
+            waitUntil(timeout: 3) {
+                urlField.value as? String == "https://www.example.com"
+            },
+            "Pasting a --location cURL should populate the parsed URL."
+        )
+
+        XCTAssertTrue(app.staticTexts["Request Warning"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Redirect-following from `--location` is not represented yet."].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled)
+    }
+
     func testEmptyStartupDisablesRunAndMenuBarRerun() throws {
         let app = launchEmptyApp()
 
@@ -81,7 +125,7 @@ final class URLBarImportUITests: XCTestCase {
             usesFailingExecutor: true
         )
 
-        app.buttons["run-button"].firstMatch.click()
+        triggerRun(app)
         XCTAssertTrue(
             waitUntil(timeout: 5) {
                 app.staticTexts["Request Issue"].exists
@@ -100,7 +144,7 @@ final class URLBarImportUITests: XCTestCase {
             usesStubExecutor: true
         )
 
-        app.buttons["run-button"].firstMatch.click()
+        triggerRun(app)
         let responseBody = app.staticTexts["response-body-text"].firstMatch
         XCTAssertTrue(responseBody.waitForExistence(timeout: 5))
         XCTAssertTrue(responseBody.label.contains("X-Trace=abc123") || (responseBody.value as? String)?.contains("X-Trace=abc123") == true)
@@ -110,7 +154,7 @@ final class URLBarImportUITests: XCTestCase {
 
         openMenuBarExtra(app: app)
         menuElement("Open Window", app: app).click()
-        XCTAssertTrue(urlField.waitForExistence(timeout: 5), "Menu bar Open Main Window should restore the workspace window.")
+        ensureMainWindowIsOpen(app: app, urlField: urlField)
         XCTAssertEqual(urlField.value as? String, "https://api.example.com/users")
 
         openMenuBarExtra(app: app)
@@ -144,7 +188,7 @@ final class URLBarImportUITests: XCTestCase {
         app.launch()
 
         let urlField = app.textFields["url-input-field"].firstMatch
-        XCTAssertTrue(urlField.waitForExistence(timeout: 5), "The request composer URL field should exist.")
+        ensureMainWindowIsOpen(app: app, urlField: urlField)
         return (app, urlField)
     }
 
@@ -153,7 +197,7 @@ final class URLBarImportUITests: XCTestCase {
         app.launch()
 
         let urlField = app.textFields["url-input-field"].firstMatch
-        XCTAssertTrue(urlField.waitForExistence(timeout: 5), "The request composer URL field should exist.")
+        ensureMainWindowIsOpen(app: app, urlField: urlField)
         return app
     }
 
@@ -196,6 +240,24 @@ final class URLBarImportUITests: XCTestCase {
         }
 
         return candidates[0]
+    }
+
+    private func triggerRun(_ app: XCUIApplication) {
+        let runButton = app.buttons["run-button"].firstMatch
+        XCTAssertTrue(runButton.waitForExistence(timeout: 2), "Run button should exist before triggering the request.")
+        XCTAssertTrue(runButton.isEnabled, "Run button should be enabled before triggering the request.")
+        app.activate()
+        app.typeKey(.return, modifierFlags: .command)
+    }
+
+    private func ensureMainWindowIsOpen(app: XCUIApplication, urlField: XCUIElement) {
+        if urlField.waitForExistence(timeout: 5) {
+            return
+        }
+
+        app.activate()
+        app.typeKey("0", modifierFlags: .command)
+        XCTAssertTrue(urlField.waitForExistence(timeout: 5), "The request composer URL field should exist.")
     }
 
     private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {

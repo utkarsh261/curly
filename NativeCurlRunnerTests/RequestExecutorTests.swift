@@ -70,6 +70,24 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertEqual(response.bodyData, Data("fail".utf8))
     }
 
+    func testHeadRequestUsesHeadMethod() async throws {
+        let transport = StubTransport(
+            result: .success(
+                (
+                    Data(),
+                    makeHTTPResponse(statusCode: 200, headers: [:])
+                )
+            )
+        )
+        let executor = URLSessionRequestExecutor(transport: transport)
+        let request = Request(method: .head, urlString: "https://example.com", headers: [], body: .none)
+
+        _ = try await executor.execute(request)
+
+        let sent = await transport.capturedRequest
+        XCTAssertEqual(sent?.httpMethod, "HEAD")
+    }
+
     private func makeHTTPResponse(statusCode: Int, headers: [String: String]) -> HTTPURLResponse {
         HTTPURLResponse(
             url: URL(string: "https://example.com")!,

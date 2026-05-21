@@ -29,7 +29,7 @@ struct WorkspaceRootView: View {
                 pendingURLInput = coordinator.state.workspaceRequest.urlString
             }
         } message: {
-            Text("Pasting a full cURL command into a non-empty workspace will replace the current request.")
+            Text(replacementDialogMessage)
         }
         .onAppear {
             pendingURLInput = coordinator.state.workspaceRequest.urlString
@@ -74,6 +74,14 @@ struct WorkspaceRootView: View {
         )
     }
 
+    private var replacementDialogMessage: String {
+        let base = "Pasting a full cURL command into a non-empty workspace will replace the current request."
+        guard let warnings = coordinator.state.replaceConfirmationState?.candidateWarnings, !warnings.isEmpty else {
+            return base
+        }
+        return base + "\n\nImport warning:\n" + warnings.joined(separator: "\n")
+    }
+
     private var requestPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -93,9 +101,9 @@ struct WorkspaceRootView: View {
 
                 if let requestIssueMessage = coordinator.state.requestIssueMessage {
                     InlineMessageCard(
-                        title: "Request Issue",
+                        title: coordinator.state.requestIssueSeverity == .warning ? "Request Warning" : "Request Issue",
                         message: requestIssueMessage,
-                        accent: .orange
+                        severity: coordinator.state.requestIssueSeverity
                     )
                 }
 
@@ -280,16 +288,13 @@ struct WorkspaceRootView: View {
     }
 
     private func handleURLBarPaste(_ text: String) -> Bool {
-        processURLFieldInput(text)
+        coordinator.handleURLBarPaste(text)
+        pendingURLInput = coordinator.state.workspaceRequest.urlString
         return true
     }
 
     private func processURLFieldInput(_ text: String) {
         coordinator.handleURLBarTextChange(text)
-
-        if coordinator.state.replaceConfirmationState == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("curl ") {
-            pendingURLInput = coordinator.state.workspaceRequest.urlString
-        }
     }
 }
 
@@ -416,11 +421,11 @@ private struct HeaderRowView: View {
 private struct InlineMessageCard: View {
     let title: String
     let message: String
-    let accent: Color
+    let severity: InlineMessageSeverity
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "exclamationmark.bubble")
+            Image(systemName: severity == .warning ? "exclamationmark.triangle" : "exclamationmark.bubble")
                 .foregroundStyle(accent)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -438,6 +443,10 @@ private struct InlineMessageCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(accent.opacity(0.12))
         )
+    }
+
+    private var accent: Color {
+        severity == .warning ? .yellow : .orange
     }
 }
 

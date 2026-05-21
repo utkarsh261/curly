@@ -91,27 +91,28 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.state.inlineErrorMessage)
     }
 
-    func testURLBarTextChangeParsesSimpleCurlWhenPasteHookFallsThrough() {
+    func testURLBarTextChangeDoesNotParseCurlWhileTyping() {
         let coordinator = SessionCoordinator()
 
         coordinator.handleURLBarTextChange("curl https://www.example.com")
 
         XCTAssertEqual(coordinator.state.workspaceRequest.method, .get)
-        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://www.example.com")
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "curl https://www.example.com")
         XCTAssertEqual(coordinator.state.workspaceRequest.headers, [])
         XCTAssertEqual(coordinator.state.workspaceRequest.body, .none)
         XCTAssertNil(coordinator.state.replaceConfirmationState)
         XCTAssertNil(coordinator.state.inlineErrorMessage)
-        XCTAssertTrue(coordinator.state.canRun)
+        XCTAssertFalse(coordinator.state.canRun)
     }
 
-    func testURLBarTextChangeDoesNotTreatSimpleCurlAsLiteralInvalidURL() {
+    func testURLBarPasteParsesSimpleCurl() {
         let coordinator = SessionCoordinator()
 
-        coordinator.handleURLBarTextChange("curl https://www.example.com")
+        coordinator.handleURLBarPaste("curl https://www.example.com")
 
-        XCTAssertNotEqual(coordinator.state.workspaceRequest.urlString, "curl https://www.example.com")
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://www.example.com")
         XCTAssertNil(coordinator.state.requestIssueMessage)
+        XCTAssertTrue(coordinator.state.canRun)
     }
 
     func testNonEmptyWorkspaceCurlPasteStagesReplacementConfirmation() {
@@ -125,6 +126,18 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.state.inlineErrorMessage)
     }
 
+    func testNonEmptyWorkspaceCurlPasteStagesReplacementWarnings() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://current.example.com")
+
+        coordinator.handleURLBarPaste("curl --location https://replacement.example.com")
+
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://current.example.com")
+        XCTAssertEqual(coordinator.state.replaceConfirmationState?.candidateRequest.urlString, "https://replacement.example.com")
+        XCTAssertEqual(coordinator.state.replaceConfirmationState?.candidateWarnings, ["Redirect-following from `--location` is not represented yet."])
+        XCTAssertNil(coordinator.state.requestIssueMessage)
+    }
+
     func testCancelReplacementLeavesWorkspaceUntouched() {
         let coordinator = SessionCoordinator()
         coordinator.setURL("https://current.example.com")
@@ -134,6 +147,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://current.example.com")
         XCTAssertNil(coordinator.state.replaceConfirmationState)
+        XCTAssertNil(coordinator.state.requestIssueMessage)
     }
 
     func testPlainURLPasteUpdatesWorkspaceURLWithoutStagingReplacement() {
@@ -184,6 +198,30 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.method, .post)
         XCTAssertNil(coordinator.state.replaceConfirmationState)
         XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+    }
+
+    func testConfirmReplacementAppliesImportWarning() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://current.example.com")
+
+        coordinator.handleURLBarPaste("curl --location https://replacement.example.com")
+        coordinator.confirmWorkspaceReplacement()
+
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://replacement.example.com")
+        XCTAssertEqual(coordinator.state.requestIssueSeverity, .warning)
+        XCTAssertEqual(coordinator.state.requestIssueMessage, "Redirect-following from `--location` is not represented yet.")
+        XCTAssertTrue(coordinator.state.canRun)
+    }
+
+    func testWarningClearsWhenRequestIsEdited() {
+        let coordinator = SessionCoordinator()
+
+        coordinator.handleURLBarPaste("curl --location https://example.com")
+        XCTAssertEqual(coordinator.state.requestIssueSeverity, .warning)
+
+        coordinator.setURL("https://edited.example.com")
+
+        XCTAssertNil(coordinator.state.requestIssueMessage)
     }
 
     func testMalformedCurlLeavesWorkspaceUntouchedAndSetsInlineError() {
