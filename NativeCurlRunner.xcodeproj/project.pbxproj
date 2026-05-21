@@ -19,6 +19,7 @@
 		A00000010000000000000011 /* ResponseFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000012 /* ResponseFormatting.swift */; };
 		A00000010000000000000012 /* JSONEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000014 /* JSONEditing.swift */; };
 		A00000010000000000000013 /* JSONCodeEditorTextKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000015 /* JSONCodeEditorTextKit.swift */; };
+		A00000010000000000000015 /* ColorExtensions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000017 /* ColorExtensions.swift */; };
 		A00000010000000000000014 /* JSONCodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000016 /* JSONCodeEditorView.swift */; };
 		B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* SessionCoordinatorTests.swift */; };
 		B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000002 /* SimpleCurlImporterTests.swift */; };
@@ -64,6 +65,7 @@
 		A00000110000000000000013 /* NativeCurlRunner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NativeCurlRunner.entitlements; sourceTree = "<group>"; };
 		A00000110000000000000014 /* JSONEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONEditing.swift; sourceTree = "<group>"; };
 		A00000110000000000000015 /* JSONCodeEditorTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorTextKit.swift; sourceTree = "<group>"; };
+		A00000110000000000000017 /* ColorExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorExtensions.swift; sourceTree = "<group>"; };
 		A00000110000000000000016 /* JSONCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorView.swift; sourceTree = "<group>"; };
 		B00000110000000000000001 /* SessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinatorTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000002 /* SimpleCurlImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporterTests.swift; sourceTree = "<group>"; };
@@ -179,6 +181,7 @@
 				A00000110000000000000010 /* URLInputField.swift */,
 				A00000110000000000000015 /* JSONCodeEditorTextKit.swift */,
 				A00000110000000000000016 /* JSONCodeEditorView.swift */,
+				A00000110000000000000017 /* ColorExtensions.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -338,6 +341,7 @@
 				A00000010000000000000012 /* JSONEditing.swift in Sources */,
 				A00000010000000000000013 /* JSONCodeEditorTextKit.swift in Sources */,
 				A00000010000000000000014 /* JSONCodeEditorView.swift in Sources */,
+				A00000010000000000000015 /* ColorExtensions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -235,6 +235,7 @@ INDEX_HTML = f"""<!DOCTYPE html>
 <tr><td class="method get">GET</td><td><code>/cookies</code></td><td>Echo request cookies</td></tr>
 <tr><td class="method get">GET</td><td><code>/cookies/set?name=value</code></td><td>Set cookies via <code>Set-Cookie</code> header</td></tr>
 <tr><td class="method get">GET</td><td><code>/response-headers?X-Custom=hello</code></td><td>Return custom response headers</td></tr>
+<tr><td class="method get">GET</td><td><code>/slow-json</code></td><td>Delayed JSON response (2s sleep) for loading state testing</td></tr>
 <tr><td class="method get">GET</td><td><code>/stream/20</code></td><td>Newline-delimited JSON stream</td></tr>
 <tr><td class="method opt">OPTIONS</td><td><code>/*</code></td><td>CORS preflight response</td></tr>
 </tbody>
@@ -270,6 +271,9 @@ curl http://localhost:{PORT}/status/418
 
 # Timeout testing
 curl --max-time 3 http://localhost:{PORT}/delay/2
+
+# Delayed JSON (loading state testing)
+curl http://localhost:{PORT}/slow-json
 
 # Stream
 curl http://localhost:{PORT}/stream/5
@@ -519,6 +523,11 @@ def handle_response_headers(h, m, p, q, groups):
     h.wfile.write((body + "\n").encode("utf-8"))
 
 
+def handle_slow_json(h, m, p, q, groups):
+    time.sleep(2.0)
+    respond(h, 200, COMPLEX_JSON)
+
+
 def handle_stream(h, m, p, q, groups):
     n = int(groups[0])
     lines = [json.dumps({"id": i, "data": f"line {i + 1}"}) + "\n" for i in range(n)]
@@ -568,6 +577,7 @@ routes = [
     (("GET", r"/cookies/set$"), handle_set_cookies),
     (("GET", r"/cookies$"), handle_cookies),
     (("GET", r"/response-headers$"), handle_response_headers),
+    (("GET", r"/slow-json$"), handle_slow_json),
     (("GET", r"/stream/(\d+)$"), handle_stream),
     (("OPTIONS", r"/.*"), handle_options),
 ]

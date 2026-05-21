@@ -58,7 +58,7 @@ final class JSONLineNumberRulerView: NSRulerView {
     ]
     private let foldAttributes: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 16, weight: .bold),
-        .foregroundColor: NSColor.labelColor
+        .foregroundColor: themeAccentNS
     ]
 
     init(textView: NSTextView) {
@@ -82,7 +82,7 @@ final class JSONLineNumberRulerView: NSRulerView {
             return
         }
 
-        NSColor.controlBackgroundColor.setFill()
+        surfaceGroupedNS.setFill()
         bounds.fill()
 
         let text = textView.string

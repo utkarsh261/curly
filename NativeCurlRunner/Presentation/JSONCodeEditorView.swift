@@ -6,6 +6,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
     @Binding var foldedRanges: [NSRange]
     var isEditable: Bool
     var accessibilityIdentifier: String
+    @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text, foldedRanges: $foldedRanges)
@@ -14,7 +15,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.drawsBackground = true
-        scrollView.backgroundColor = .textBackgroundColor
+        scrollView.backgroundColor = resolvedSurfaceRaised(for: colorScheme)
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
         scrollView.autohidesScrollers = true
@@ -40,7 +41,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
         textView.isHorizontallyResizable = true
         textView.textContainerInset = NSSize(width: 12, height: 12)
         textView.textContainer?.lineFragmentPadding = 0
-        textView.backgroundColor = .textBackgroundColor
+        textView.backgroundColor = resolvedSurfaceRaised(for: colorScheme)
         textView.drawsBackground = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
@@ -72,6 +73,9 @@ struct JSONCodeEditorView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else {
             return
         }
+
+        scrollView.backgroundColor = resolvedSurfaceRaised(for: colorScheme)
+        textView.backgroundColor = resolvedSurfaceRaised(for: colorScheme)
 
         context.coordinator.text = $text
         context.coordinator.foldedRanges = $foldedRanges
@@ -296,7 +300,7 @@ struct JSONEditorPanel: View {
             if let formattingError {
                 Text(formattingError)
                     .font(.caption)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Color.accent)
             }
         }
         .onAppear(perform: refreshValidation)

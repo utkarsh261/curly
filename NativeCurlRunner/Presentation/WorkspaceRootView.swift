@@ -89,6 +89,7 @@ struct WorkspaceRootView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     paneTitle(
                         title: "Request",
+                        icon: "square.and.pencil",
                         subtitle: "Compose a REST request from a URL or pasted cURL command."
                     )
 
@@ -112,15 +113,16 @@ struct WorkspaceRootView: View {
                     GroupBox {
                         VStack(alignment: .leading, spacing: 14) {
                             HStack {
-                                Text("Headers")
+                                Label("Headers", systemImage: "line.3.horizontal.decrease.circle")
                                     .font(.headline)
                                 Spacer()
                                 Button {
                                     coordinator.addHeader()
                                 } label: {
-                                    Label("Add", systemImage: "plus")
+                                    Label("Add", systemImage: "plus.circle")
                                 }
                                 .labelStyle(.iconOnly)
+                                .foregroundStyle(Color.accent)
                                 .help("Add a header")
                             }
 
@@ -148,32 +150,32 @@ struct WorkspaceRootView: View {
                 .frame(minHeight: geometry.size.height)
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.28))
+        .background(Color.surfaceGrouped)
     }
 
     private var responsePane: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Response")
+                    Label("Response", systemImage: "arrow.left.arrow.right")
                         .font(.title3.weight(.semibold))
                     Text("Inspect the last response in a formatted JSON or raw body view.")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.textMuted)
                 }
                 Spacer()
             }
 
             GroupBox {
-                HStack(spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
                     StatusMetric(
                         title: "Status",
                         value: coordinator.state.responseSummaryStatusValue,
                         tone: coordinator.state.responseTone
                     )
-                    SummaryMetric(title: "Duration", value: coordinator.state.responseSummaryDurationValue)
-                    SummaryMetric(title: "Size", value: coordinator.state.responseSummarySizeValue)
-                    SummaryMetric(title: "Last Run", value: coordinator.state.responseSummaryTimestampValue)
+                    SummaryMetric(title: "Duration", value: coordinator.state.responseSummaryDurationValue, icon: "clock")
+                    SummaryMetric(title: "Size", value: coordinator.state.responseSummarySizeValue, icon: "arrow.down.doc")
+                    SummaryMetric(title: "Last Run", value: coordinator.state.responseSummaryTimestampValue, icon: "calendar")
                     Spacer()
                     StaleBadge(isVisible: coordinator.state.responseIsStale)
                 }
@@ -200,6 +202,7 @@ struct WorkspaceRootView: View {
                             Label("Export", systemImage: "square.and.arrow.up")
                         }
                         .labelStyle(.iconOnly)
+                        .foregroundStyle(Color.accent)
                         .help("Export response body to a file")
                         .disabled(!coordinator.state.canExportResponseBody)
 
@@ -211,6 +214,7 @@ struct WorkspaceRootView: View {
                                 Label("Collapse", systemImage: "arrow.down.right.and.arrow.up.left")
                             }
                             .labelStyle(.iconOnly)
+                            .foregroundStyle(Color.accent)
                             .help("Collapse JSON containers")
                             .disabled(coordinator.state.responseBodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
@@ -220,6 +224,7 @@ struct WorkspaceRootView: View {
                                 Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
                             }
                             .labelStyle(.iconOnly)
+                            .foregroundStyle(Color.accent)
                             .help("Expand JSON containers")
                             .disabled(responseFoldedRanges.isEmpty)
                         }
@@ -233,6 +238,7 @@ struct WorkspaceRootView: View {
             .frame(maxHeight: .infinity)
         }
         .padding(20)
+        .background(Color.surfaceGrouped)
     }
 
     private var bodyBinding: Binding<String> {
@@ -288,17 +294,18 @@ struct WorkspaceRootView: View {
         } else {
             VStack(spacing: 18) {
                 Image(systemName: coordinator.state.statusIconName)
-                    .font(.system(size: 42, weight: .regular))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundStyle(Color.textMuted)
 
                 VStack(spacing: 6) {
                     Text(coordinator.state.responsePlaceholderTitle)
-                        .font(.headline)
+                        .font(.title3.weight(.medium))
 
                     Text(coordinator.state.responsePlaceholderMessage)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.textMuted)
                         .multilineTextAlignment(.center)
+                        .frame(maxWidth: 320)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -306,13 +313,13 @@ struct WorkspaceRootView: View {
         }
     }
 
-    private func paneTitle(title: String, subtitle: String) -> some View {
+    private func paneTitle(title: String, icon: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+            Label(title, systemImage: icon)
                 .font(.title3.weight(.semibold))
             Text(subtitle)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.textMuted)
         }
     }
 
@@ -369,7 +376,7 @@ private struct RequestComposerView: View {
 
                 Image(systemName: "link")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textMuted)
 
                 URLInputField(
                     text: $url,
@@ -386,6 +393,7 @@ private struct RequestComposerView: View {
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
                 .buttonStyle(.borderedProminent)
+                .tint(Color.accent)
                 .controlSize(.regular)
                 .accessibilityIdentifier("run-button")
                 .disabled(!canRun)
@@ -393,23 +401,24 @@ private struct RequestComposerView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color(nsColor: .textBackgroundColor))
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.surfaceRaised)
+                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: isURLFieldFocused.wrappedValue ? 1.5 : 1)
             }
 
             Text("Paste cURL directly. The request below updates automatically.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.textMuted)
                 .padding(.horizontal, 2)
         }
     }
 
     private var borderColor: Color {
-        isURLFieldFocused.wrappedValue ? .accentColor : Color(nsColor: .separatorColor).opacity(0.7)
+        isURLFieldFocused.wrappedValue ? Color.accent : Color.borderSubtle
     }
 }
 
@@ -423,7 +432,7 @@ private struct HeaderRowView: View {
                 coordinator.updateHeader(id: header.id, isEnabled: !header.isEnabled)
             } label: {
                 Image(systemName: header.isEnabled ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(header.isEnabled ? Color.accentColor : .secondary)
+                    .foregroundStyle(header.isEnabled ? Color.accent : Color.textMuted)
             }
             .buttonStyle(.plain)
 
@@ -439,7 +448,7 @@ private struct HeaderRowView: View {
             .overlay {
                 if header.isEnabled && header.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color.orange.opacity(0.7), lineWidth: 1)
+                        .stroke(Color.accent.opacity(0.5), lineWidth: 1)
                 }
             }
 
@@ -458,9 +467,14 @@ private struct HeaderRowView: View {
                 Image(systemName: "trash")
             }
             .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.red.opacity(0.7))
         }
         .opacity(header.isEnabled ? 1 : 0.55)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.surfaceGrouped)
+        )
     }
 }
 
@@ -473,17 +487,17 @@ private struct RequestBodySection: View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
-                    Text("Body")
+                    Label("Body", systemImage: "doc.text")
                         .font(.headline)
                     Spacer()
                     Text(isJSONBody ? "JSON" : "Raw")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.textMuted)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(
                             Capsule(style: .continuous)
-                                .fill(Color(nsColor: .controlBackgroundColor))
+                                .fill(Color.surfaceGrouped)
                         )
                 }
 
@@ -534,7 +548,7 @@ private struct InlineMessageCard: View {
                     .font(.headline)
                 Text(message)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textMuted)
             }
 
             Spacer(minLength: 0)
@@ -547,7 +561,7 @@ private struct InlineMessageCard: View {
     }
 
     private var accent: Color {
-        severity == .warning ? .yellow : .orange
+        severity == .warning ? Color.accent : .red
     }
 }
 
@@ -559,21 +573,21 @@ private struct EmptySectionHint: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: symbol)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.textMuted)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                 Text(message)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.textMuted)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
+                .fill(Color.surfaceGrouped)
         )
     }
 }
@@ -581,16 +595,23 @@ private struct EmptySectionHint: View {
 private struct SummaryMetric: View {
     let title: String
     let value: String
+    let icon: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: icon)
                 .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline.monospacedDigit())
+                .foregroundStyle(Color.textMuted)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textMuted)
+                Text(value)
+                    .font(.headline.monospacedDigit())
+            }
         }
-        .frame(minWidth: 78, alignment: .leading)
+        .frame(minWidth: 86, alignment: .leading)
     }
 }
 
@@ -600,32 +621,31 @@ private struct StatusMetric: View {
     let tone: ResponseTone
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(value)
-                .font(.headline.monospacedDigit())
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(toneColor.opacity(0.14))
-                )
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 7))
                 .foregroundStyle(toneColor)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption2)
+                    .foregroundStyle(Color.textMuted)
+                Text(value)
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(toneColor)
+            }
         }
-        .frame(minWidth: 96, alignment: .leading)
+        .frame(minWidth: 100, alignment: .leading)
     }
 
     private var toneColor: Color {
         switch tone {
         case .neutral:
-            return .secondary
+            return .textMuted
         case .success:
             return .green
         case .warning:
-            return .orange
+            return .accent
         case .failure:
             return .red
         }
@@ -638,12 +658,12 @@ private struct StaleBadge: View {
     var body: some View {
         Text("Stale")
             .font(.caption.weight(.semibold))
-            .foregroundStyle(.orange)
+            .foregroundStyle(.red)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color.orange.opacity(isVisible ? 0.14 : 0.0))
+                    .fill(Color.red.opacity(isVisible ? 0.12 : 0.0))
             )
             .opacity(isVisible ? 1 : 0)
     }
@@ -731,7 +751,7 @@ private struct JSONNodeView: View {
                 .foregroundStyle(.primary)
             Text(detail)
                 .font(.body.monospaced())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.textMuted)
             Spacer(minLength: 0)
         }
         .textSelection(.enabled)
