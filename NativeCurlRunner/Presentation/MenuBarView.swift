@@ -6,6 +6,7 @@ struct MenuBarLabelView: View {
 
     var body: some View {
         Label(coordinator.state.statusTitle, systemImage: coordinator.state.statusIconName)
+            .accessibilityIdentifier("menu-bar-status-item")
     }
 }
 
@@ -24,10 +25,12 @@ struct MenuBarView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(coordinator.state.statusTitle)
                         .font(.headline)
+                        .accessibilityIdentifier("menu-bar-status-title")
                     Text(coordinator.state.statusSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("menu-bar-status-subtitle")
                 }
             }
 
@@ -37,21 +40,32 @@ struct MenuBarView: View {
                 coordinator.rerunLastRequest()
             }
             .disabled(!coordinator.state.canRerun)
+            .accessibilityIdentifier("rerun-last-request-menu-button")
 
-            Button("Open Main Window") {
+            Button("Open Window") {
                 coordinator.requestWindowOpen()
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)
             }
+            .accessibilityIdentifier("open-main-window-menu-button")
+
+            Divider()
+
+            Button("Clear Workspace") {
+                coordinator.newWorkspace()
+            }
+            .accessibilityIdentifier("new-workspace-menu-button")
 
             Divider()
 
             Button("Quit") {
                 NSApp.terminate(nil)
             }
+            .accessibilityIdentifier("quit-menu-button")
         }
         .padding(12)
         .frame(width: 320)
+        .accessibilityIdentifier("menu-bar-dropdown")
     }
 
     private var statusColor: Color {

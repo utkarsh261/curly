@@ -230,6 +230,7 @@ struct WorkspaceRootView: View {
                     Text(coordinator.state.responseHeaderAndBodyText)
                         .font(.body.monospaced())
                         .textSelection(.enabled)
+                        .accessibilityIdentifier("response-body-text")
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     VStack(alignment: .leading, spacing: 14) {

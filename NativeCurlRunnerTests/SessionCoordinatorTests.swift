@@ -300,6 +300,93 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(invocations[1].urlString, "https://example.com/original")
     }
 
+    func testRerunIsUnavailableBeforeFirstDispatchAndWhileRunning() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+
+        XCTAssertFalse(coordinator.state.canRerun)
+
+        coordinator.setURL("https://example.com/slow")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.isWaitingForResponse }
+
+        XCTAssertFalse(coordinator.state.canRerun)
+
+        let countBeforeRerun = await executor.invocationCount
+        coordinator.rerunLastRequest()
+        let countAfterRerun = await executor.invocationCount
+        XCTAssertEqual(countAfterRerun, countBeforeRerun)
+
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 100)
+            )
+        )
+    }
+
+    func testTransportFailureKeepsLastExecutedSnapshotAvailableForRerun() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/failing")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        await executor.resumeFailure(ExecutionError.transport("offline"))
+        await waitUntil { coordinator.state.executionState == .failed }
+
+        XCTAssertEqual(coordinator.state.inlineErrorMessage, "offline")
+        XCTAssertEqual(coordinator.state.lastExecutedRequest?.request.urlString, "https://example.com/failing")
+        XCTAssertTrue(coordinator.state.canRerun)
+        XCTAssertEqual(coordinator.state.statusTitle, "Failed")
+        XCTAssertEqual(coordinator.state.statusSubtitle, "offline")
+    }
+
+    func testWindowCloseAndOpenPreservesSessionState() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/users")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [ResponseHeader(name: "Content-Type", value: "text/plain")],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 100)
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+
+        coordinator.setWindowVisible(false)
+        coordinator.requestWindowOpen()
+
+        XCTAssertTrue(coordinator.state.isWindowVisible)
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://example.com/users")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.body.bodyText, "ok")
+        XCTAssertEqual(coordinator.state.lastExecutedRequest?.request.urlString, "https://example.com/users")
+        XCTAssertTrue(coordinator.state.canRerun)
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 1,
         condition: @escaping @MainActor () async -> Bool
@@ -340,8 +427,17 @@ private actor StubRequestExecutor: RequestExecuting {
         continuation = nil
     }
 
+    func resumeFailure(_ error: Error) {
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
     var invocationCount: Int {
         invocations.count
+    }
+
+    var isWaitingForResponse: Bool {
+        continuation != nil
     }
 }
 
