@@ -57,8 +57,8 @@ final class JSONLineNumberRulerView: NSRulerView {
         .foregroundColor: NSColor.secondaryLabelColor
     ]
     private let foldAttributes: [NSAttributedString.Key: Any] = [
-        .font: NSFont.systemFont(ofSize: 10, weight: .semibold),
-        .foregroundColor: NSColor.tertiaryLabelColor
+        .font: NSFont.systemFont(ofSize: 16, weight: .bold),
+        .foregroundColor: NSColor.labelColor
     ]
 
     init(textView: NSTextView) {
