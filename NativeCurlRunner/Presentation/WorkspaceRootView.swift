@@ -4,6 +4,7 @@ struct WorkspaceRootView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
     @FocusState private var isURLFieldFocused: Bool
     @State private var pendingURLInput = ""
+    @State private var responseFoldedRanges: [NSRange] = []
 
     var body: some View {
         HSplitView {
@@ -157,23 +158,7 @@ struct WorkspaceRootView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-
                 Spacer()
-
-                Picker("Mode", selection: responseModeBinding) {
-                    ForEach(ResponseViewMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 180)
-                .disabled(!coordinator.state.hasVisibleResponse)
-
-                Button("Export Body") {
-                    coordinator.exportVisibleResponseBody()
-                }
-                .buttonStyle(.bordered)
-                .disabled(!coordinator.state.canExportResponseBody)
             }
 
             GroupBox {
@@ -193,9 +178,54 @@ struct WorkspaceRootView: View {
             }
 
             GroupBox {
-                responseContent
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(18)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Picker("", selection: responseModeBinding) {
+                            ForEach(ResponseViewMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(width: 180)
+                        .disabled(!coordinator.state.hasVisibleResponse)
+
+                        Spacer()
+
+                        Button {
+                            coordinator.exportVisibleResponseBody()
+                        } label: {
+                            Label("Export", systemImage: "square.and.arrow.up")
+                        }
+                        .labelStyle(.iconOnly)
+                        .help("Export response body to a file")
+                        .disabled(!coordinator.state.canExportResponseBody)
+
+                        if coordinator.state.responseJSONValue != nil,
+                           coordinator.state.currentResponseMode == .tree {
+                            Button {
+                                responseFoldedRanges = JSONFoldIndex.foldRanges(in: coordinator.state.responseBodyText).map(\.fullRange)
+                            } label: {
+                                Label("Collapse", systemImage: "arrow.down.right.and.arrow.up.left")
+                            }
+                            .labelStyle(.iconOnly)
+                            .help("Collapse JSON containers")
+                            .disabled(coordinator.state.responseBodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            Button {
+                                responseFoldedRanges = []
+                            } label: {
+                                Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                            }
+                            .labelStyle(.iconOnly)
+                            .help("Expand JSON containers")
+                            .disabled(responseFoldedRanges.isEmpty)
+                        }
+                    }
+
+                    responseContent(foldedRanges: $responseFoldedRanges)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(18)
             }
             .frame(maxHeight: .infinity)
         }
@@ -217,14 +247,16 @@ struct WorkspaceRootView: View {
     }
 
     @ViewBuilder
-    private var responseContent: some View {
+    private func responseContent(foldedRanges: Binding<[NSRange]>) -> some View {
         if coordinator.state.responseJSONValue != nil, coordinator.state.currentResponseMode == .tree {
             JSONEditorPanel(
                 text: .constant(coordinator.state.responseBodyText),
                 isEditable: false,
                 showsValidation: false,
                 minHeight: 360,
-                accessibilityIdentifier: "response-json-pretty"
+                accessibilityIdentifier: "response-json-pretty",
+                foldedRanges: foldedRanges,
+                showsFoldingControls: false
             )
         } else if coordinator.state.hasVisibleResponse {
             ScrollView {
@@ -432,6 +464,7 @@ private struct HeaderRowView: View {
 private struct RequestBodySection: View {
     @Binding var bodyText: String
     let isJSONBody: Bool
+    @State private var foldedRanges: [NSRange] = []
 
     var bodyContent: some View {
         GroupBox {
@@ -457,7 +490,9 @@ private struct RequestBodySection: View {
                         isEditable: true,
                         showsValidation: true,
                         minHeight: 240,
-                        accessibilityIdentifier: "request-json-body-editor"
+                        accessibilityIdentifier: "request-json-body-editor",
+                        foldedRanges: $foldedRanges,
+                        showsFoldingControls: true
                     )
                 } else {
                     TextEditor(text: $bodyText)

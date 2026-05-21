@@ -228,8 +228,9 @@ struct JSONEditorPanel: View {
     var showsValidation: Bool = true
     var minHeight: CGFloat = 220
     var accessibilityIdentifier: String
+    @Binding var foldedRanges: [NSRange]
+    var showsFoldingControls: Bool = true
 
-    @State private var foldedRanges: [NSRange] = []
     @State private var validationResult = JSONValidationResult(isValid: true, errorMessage: nil)
     @State private var formattingError: String?
 
@@ -242,25 +243,27 @@ struct JSONEditorPanel: View {
 
                 Spacer()
 
-                Button {
-                    collapseAll()
-                } label: {
-                    Label("Collapse", systemImage: "arrow.down.right.and.arrow.up.left")
-                }
-                .labelStyle(.iconOnly)
-                .help("Collapse JSON containers")
-                .accessibilityIdentifier("\(accessibilityIdentifier)-collapse")
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if showsFoldingControls {
+                    Button {
+                        collapseAll()
+                    } label: {
+                        Label("Collapse", systemImage: "arrow.down.right.and.arrow.up.left")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Collapse JSON containers")
+                    .accessibilityIdentifier("\(accessibilityIdentifier)-collapse")
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
-                Button {
-                    expandAll()
-                } label: {
-                    Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                    Button {
+                        expandAll()
+                    } label: {
+                        Label("Expand", systemImage: "arrow.up.left.and.arrow.down.right")
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Expand JSON containers")
+                    .accessibilityIdentifier("\(accessibilityIdentifier)-expand")
+                    .disabled(foldedRanges.isEmpty)
                 }
-                .labelStyle(.iconOnly)
-                .help("Expand JSON containers")
-                .accessibilityIdentifier("\(accessibilityIdentifier)-expand")
-                .disabled(foldedRanges.isEmpty)
 
                 if isEditable {
                     Button("Format") {
