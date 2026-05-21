@@ -128,13 +128,22 @@ final class JSONLineNumberRulerView: NSRulerView {
         }
 
         let visibleRect = textView.visibleRect
-        let textPoint = NSPoint(
-            x: textView.textContainerOrigin.x + 1,
-            y: point.y + visibleRect.minY - textView.textContainerOrigin.y
-        )
-        let glyphIndex = layoutManager.glyphIndex(for: textPoint, in: textContainer)
-        let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
-        let lineNumber = JSONLineMap(text: textView.string).lineNumber(at: characterIndex)
+        let textY = point.y + visibleRect.minY - textView.textContainerOrigin.y
+
+        let fullGlyphRange = layoutManager.glyphRange(for: textContainer)
+        var foundLineNumber: Int?
+        let text = textView.string
+        let lineMap = JSONLineMap(text: text)
+
+        layoutManager.enumerateLineFragments(forGlyphRange: fullGlyphRange) { rect, _, _, glyphRange, stop in
+            if textY >= rect.minY && textY <= rect.maxY {
+                let charIndex = layoutManager.characterIndexForGlyph(at: glyphRange.location)
+                foundLineNumber = lineMap.lineNumber(at: charIndex)
+                stop.pointee = true
+            }
+        }
+
+        guard let lineNumber = foundLineNumber else { return }
         onToggleFold?(lineNumber)
     }
 
