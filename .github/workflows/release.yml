@@ -57,3 +57,21 @@ jobs:
           gh release view "$TAG_NAME" >/dev/null 2>&1 || \
             gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes
           gh release upload "$TAG_NAME" "dist/NativeCurlRunner-${TAG_NAME}.dmg" --clobber
+
+      - name: Update Homebrew Cask
+        run: |
+          TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+          VERSION_CLEAN="${TAG_NAME#v}"
+          SHA256=$(shasum -a 256 "dist/NativeCurlRunner-${TAG_NAME}.dmg" | awk '{print $1}')
+          
+          git fetch origin main
+          git checkout main
+          
+          perl -pi -e "s/version \".*\"/version \"$VERSION_CLEAN\"/g" Casks/nativecurlrunner.rb
+          perl -pi -e "s/sha256 \".*\"/sha256 \"$SHA256\"/g" Casks/nativecurlrunner.rb
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/nativecurlrunner.rb
+          git commit -m "chore: update Homebrew Cask to $TAG_NAME" || exit 0
+          git push origin main
