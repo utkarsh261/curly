@@ -2,6 +2,7 @@
 .DerivedData/
 .swift-cache/
 plans/
+dist/
 
 # Xcode
 #
