@@ -9,7 +9,7 @@ Curly is a native macOS GUI for importing cURL commands, editing REST requests, 
 You can install Curly via Homebrew with zero Gatekeeper friction:
 
 ```sh
-brew tap utkarsh261/gurl https://github.com/utkarsh261/gurl.git
+brew tap utkarsh261/curly https://github.com/utkarsh261/curly.git
 brew install --cask curly
 ```
 
