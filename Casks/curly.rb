@@ -9,6 +9,12 @@ cask "curly" do
 
   app "Curly.app"
 
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-cr", "#{appdir}/Curly.app"],
+                   must_succeed: false
+  end
+
   zap trash: [
     "~/Library/Application Support/Curly",
     "~/Library/Preferences/com.example.Curly.plist",

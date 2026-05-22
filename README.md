@@ -13,6 +13,18 @@ brew tap utkarsh261/curly https://github.com/utkarsh261/curly.git
 brew install --cask curly
 ```
 
+#### Troubleshooting (Work Computers & Strict MDM)
+
+If your work computer has strict security policies (managed by Jamf, SentinelOne, or MDM) and the app does not launch or is blocked when opened via Spotlight:
+
+1. **Clear macOS Quarantine Extended Attributes**:
+   Run the following command in your Terminal to strip all quarantine/Gatekeeper attributes:
+   ```sh
+   xattr -cr /Applications/Curly.app
+   ```
+2. **First-Launch Permission**:
+   If prompted that the app cannot be verified, right-click (or Control-click) `Curly.app` in Finder, select **Open**, and click **Open** on the confirmation dialog. Alternatively, navigate to **System Settings > Privacy & Security**, scroll to the security section, and click **Open Anyway**.
+
 ---
 
 ## Development
