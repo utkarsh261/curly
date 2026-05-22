@@ -110,44 +110,18 @@ struct WorkspaceRootView: View {
                         )
                     }
 
-                    GroupBox {
-                        VStack(alignment: .leading, spacing: 14) {
-                            HStack {
-                                Label("Headers", systemImage: "line.3.horizontal.decrease.circle")
-                                    .font(.headline)
-                                Spacer()
-                                Button {
-                                    coordinator.addHeader()
-                                } label: {
-                                    Label("Add", systemImage: "plus.circle")
-                                }
-                                .labelStyle(.iconOnly)
-                                .foregroundStyle(Color.accent)
-                                .help("Add a header")
-                            }
-
-                            if coordinator.state.workspaceRequest.headers.isEmpty {
-                                EmptySectionHint(
-                                    symbol: "line.3.horizontal.decrease.circle",
-                                    title: "No headers yet",
-                                    message: "Add headers as structured rows. Disabled rows stay in the editor but are ignored."
-                                )
-                            } else {
-                                VStack(spacing: 10) {
-                                    ForEach(coordinator.state.workspaceRequest.headers) { header in
-                                        HeaderRowView(header: header)
-                                            .environmentObject(coordinator)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(14)
-                    }
-
-                    RequestBodySection(bodyText: bodyBinding, isJSONBody: requestBodyIsJSON)
+                    RequestEditorAccordion(
+                        expansion: coordinator.state.requestEditorExpansion,
+                        headers: coordinator.state.workspaceRequest.headers,
+                        bodyText: bodyBinding,
+                        isJSONBody: requestBodyIsJSON,
+                        onToggle: coordinator.toggleRequestEditorSection,
+                        onAddHeader: coordinator.addHeader
+                    )
+                    .environmentObject(coordinator)
                 }
                 .padding(20)
-                .frame(minHeight: geometry.size.height)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
         }
         .background(Color.surfaceGrouped)
@@ -480,29 +454,126 @@ private struct HeaderRowView: View {
     }
 }
 
-private struct RequestBodySection: View {
+private struct RequestEditorAccordion: View {
+    @EnvironmentObject private var coordinator: SessionCoordinator
+    let expansion: RequestEditorExpansionState
+    let headers: [Header]
     @Binding var bodyText: String
     let isJSONBody: Bool
+    let onToggle: (RequestEditorSection) -> Void
+    let onAddHeader: () -> Void
     @State private var foldedRanges: [NSRange] = []
 
-    var bodyContent: some View {
+    var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Label("Body", systemImage: "doc.text")
-                        .font(.headline)
-                    Spacer()
-                    Text(isJSONBody ? "JSON" : "Raw")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule(style: .continuous)
-                                .fill(Color.surfaceGrouped)
-                        )
+                accordionRow(
+                    title: "Headers",
+                    icon: "line.3.horizontal.decrease.circle",
+                    metadata: headerCountSummary,
+                    isExpanded: expansion.headersExpanded
+                ) {
+                    onToggle(.headers)
                 }
 
+                if expansion.headersExpanded {
+                    headersContent
+                }
+
+                Divider()
+
+                accordionRow(
+                    title: "Body",
+                    icon: "doc.text",
+                    metadata: isJSONBody ? "JSON" : "Raw",
+                    isExpanded: expansion.bodyExpanded
+                ) {
+                    onToggle(.body)
+                }
+
+                if expansion.bodyExpanded {
+                    bodyContent
+                }
+            }
+            .padding(12)
+        }
+    }
+
+    private var headerCountSummary: String {
+        let enabledCount = headers.filter(\.isEnabled).count
+        if headers.isEmpty {
+            return "0"
+        }
+        return enabledCount == headers.count ? "\(enabledCount)" : "\(enabledCount)/\(headers.count)"
+    }
+
+    @ViewBuilder
+    private var headersContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if headers.isEmpty {
+                EmptySectionHint(
+                    symbol: "line.3.horizontal.decrease.circle",
+                    title: "No headers yet",
+                    message: "Add headers as structured rows. Disabled rows stay in the editor but are ignored."
+                )
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(headers) { header in
+                        HeaderRowView(header: header)
+                            .environmentObject(coordinator)
+                    }
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button {
+                    onAddHeader()
+                } label: {
+                    Label("Add", systemImage: "plus.circle")
+                }
+                .labelStyle(.iconOnly)
+                .foregroundStyle(Color.accent)
+                .help("Add a header")
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private func accordionRow(
+        title: String,
+        icon: String,
+        metadata: String,
+        isExpanded: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .foregroundStyle(Color.textMuted)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text(metadata)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textMuted)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textMuted)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("request-accordion-\(title.lowercased())")
+    }
+
+    private var bodyContent: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
                 if isJSONBody {
                     JSONEditorPanel(
                         text: $bodyText,
@@ -528,10 +599,6 @@ private struct RequestBodySection: View {
             .frame(maxHeight: .infinity)
             .padding(14)
         }
-    }
-
-    var body: some View {
-        bodyContent
     }
 }
 

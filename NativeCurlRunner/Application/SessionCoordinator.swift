@@ -26,6 +26,7 @@ final class SessionCoordinator: ObservableObject {
         currentRunTask?.cancel()
         currentRunTask = nil
         state.workspaceRequest = .empty
+        state.requestEditorExpansion = .allExpanded
         state.lastExecutedRequest = nil
         state.executionState = .idle
         state.visibleResponseState = nil
@@ -92,6 +93,10 @@ final class SessionCoordinator: ObservableObject {
         state.workspaceRequest.headers.removeAll { $0.id == id }
         clearInlineMessage()
         markResultStaleIfNeeded()
+    }
+
+    func toggleRequestEditorSection(_ section: RequestEditorSection) {
+        state.requestEditorExpansion.toggle(section)
     }
 
     func setResponseMode(_ mode: ResponseViewMode) {
@@ -238,6 +243,7 @@ final class SessionCoordinator: ObservableObject {
 
     private func applyImportedRequest(_ request: Request) {
         state.workspaceRequest = request
+        state.requestEditorExpansion = .allExpanded
         markResultStaleIfNeeded()
     }
 

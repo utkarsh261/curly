@@ -76,6 +76,41 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.isWindowVisible)
     }
 
+    func testRequestEditorStartsWithHeadersAndBodyExpanded() {
+        let coordinator = SessionCoordinator()
+
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+    }
+
+    func testRequestEditorToggleKeepsSectionsIndependent() {
+        let coordinator = SessionCoordinator()
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.toggleRequestEditorSection(.headers)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.toggleRequestEditorSection(.headers)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.toggleRequestEditorSection(.body)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+    }
+
+    func testNewWorkspaceResetsRequestEditorExpansion() {
+        let coordinator = SessionCoordinator()
+        coordinator.toggleRequestEditorSection(.body)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.newWorkspace()
+
+        XCTAssertEqual(coordinator.state.requestEditorExpansion, .allExpanded)
+    }
+
     func testEmptyWorkspaceCurlPasteImportsImmediately() {
         let coordinator = SessionCoordinator()
 
@@ -200,6 +235,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.method, .post)
         XCTAssertNil(coordinator.state.replaceConfirmationState)
         XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+        XCTAssertEqual(coordinator.state.requestEditorExpansion, .allExpanded)
     }
 
     func testConfirmReplacementAppliesImportWarning() {

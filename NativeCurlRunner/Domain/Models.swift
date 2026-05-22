@@ -248,6 +248,27 @@ struct InlineMessage: Equatable {
     var text: String
 }
 
+enum RequestEditorSection: Equatable {
+    case headers
+    case body
+}
+
+struct RequestEditorExpansionState: Equatable {
+    var headersExpanded: Bool
+    var bodyExpanded: Bool
+
+    static let allExpanded = RequestEditorExpansionState(headersExpanded: true, bodyExpanded: true)
+
+    mutating func toggle(_ section: RequestEditorSection) {
+        switch section {
+        case .headers:
+            headersExpanded.toggle()
+        case .body:
+            bodyExpanded.toggle()
+        }
+    }
+}
+
 struct SessionState: Equatable {
     var workspaceRequest: Request
     var lastExecutedRequest: LastExecutedRequest?
@@ -256,6 +277,7 @@ struct SessionState: Equatable {
     var replaceConfirmationState: ReplaceConfirmationState?
     var inlineMessage: InlineMessage?
     var isWindowVisible: Bool
+    var requestEditorExpansion: RequestEditorExpansionState
 
     init(
         workspaceRequest: Request,
@@ -265,7 +287,8 @@ struct SessionState: Equatable {
         replaceConfirmationState: ReplaceConfirmationState?,
         inlineMessage: InlineMessage? = nil,
         inlineErrorMessage: String? = nil,
-        isWindowVisible: Bool
+        isWindowVisible: Bool,
+        requestEditorExpansion: RequestEditorExpansionState = .allExpanded
     ) {
         self.workspaceRequest = workspaceRequest
         self.lastExecutedRequest = lastExecutedRequest
@@ -274,6 +297,7 @@ struct SessionState: Equatable {
         self.replaceConfirmationState = replaceConfirmationState
         self.inlineMessage = inlineMessage ?? inlineErrorMessage.map { InlineMessage(severity: .error, text: $0) }
         self.isWindowVisible = isWindowVisible
+        self.requestEditorExpansion = requestEditorExpansion
     }
 
     static let initial = SessionState(
@@ -282,7 +306,8 @@ struct SessionState: Equatable {
         executionState: .idle,
         visibleResponseState: nil,
         replaceConfirmationState: nil,
-        isWindowVisible: true
+        isWindowVisible: true,
+        requestEditorExpansion: .allExpanded
     )
 
     var requestIssueMessage: String? {
