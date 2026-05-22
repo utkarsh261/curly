@@ -32,7 +32,7 @@ jobs:
         run: brew install just
 
       - name: Run unit tests
-        run: just test-unit
+        run: just test-unit-ci
 
       - name: Build DMG
         run: just package-dmg-free

@@ -2,6 +2,7 @@ set shell := ["zsh", "-cu"]
 
 project := "NativeCurlRunner.xcodeproj"
 scheme := "NativeCurlRunner"
+unit_scheme := "NativeCurlRunnerUnitTests"
 configuration := "Debug"
 release_configuration := "Release"
 sdk := "macosx"
@@ -23,6 +24,10 @@ test:
 # Run unit tests only.
 test-unit:
     zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -skip-testing:NativeCurlRunnerUITests
+
+# Run unit tests using a scheme that does not build the UI test target. Use this in CI.
+test-unit-ci:
+    zsh NativeCurlRunnerTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{unit_scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test
 
 # Run UI tests only.
 test-ui:
