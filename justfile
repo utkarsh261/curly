@@ -64,12 +64,23 @@ package-zip-free: prepare-free-app
 # Create distributable dmg from ad-hoc signed app.
 package-dmg-free: prepare-free-app
     rm -f "{{release_dir}}/NativeCurlRunner.dmg"
-    hdiutil create -volname "NativeCurlRunner" -srcfolder "{{release_dir}}/NativeCurlRunner.app" -ov -format UDZO "{{release_dir}}/NativeCurlRunner.dmg"
+    rm -rf "{{release_dir}}/dmg_stage"
+    mkdir -p "{{release_dir}}/dmg_stage"
+    cp -R "{{release_dir}}/NativeCurlRunner.app" "{{release_dir}}/dmg_stage/"
+    create-dmg \
+      --volname "NativeCurlRunner" \
+      --window-pos 200 120 \
+      --window-size 600 400 \
+      --icon-size 100 \
+      --icon "NativeCurlRunner.app" 160 160 \
+      --app-drop-link 460 160 \
+      --hdiutil-quiet \
+      "{{release_dir}}/NativeCurlRunner.dmg" \
+      "{{release_dir}}/dmg_stage/"
+    rm -rf "{{release_dir}}/dmg_stage"
 
 # Create styled drag-to-Applications dmg from ad-hoc signed app.
-package-dmg-styled-free: prepare-free-app
-    rm -f "{{release_dir}}/NativeCurlRunner.dmg"
-    zsh ./scripts/create_styled_dmg.sh "{{release_dir}}/NativeCurlRunner.app" "{{release_dir}}/NativeCurlRunner.dmg" "NativeCurlRunner"
+package-dmg-styled-free: package-dmg-free
 
 # Validate code signature and Gatekeeper assessment for packaged app.
 verify-package-free:
