@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A00000410000000000000001"
-               BuildableName = "NativeCurlRunner.app"
-               BlueprintName = "NativeCurlRunner"
-               ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+               BuildableName = "Curly.app"
+               BlueprintName = "Curly"
+               ReferencedContainer = "container:Curly.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
          <BuildActionEntry
@@ -29,9 +29,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B00000410000000000000001"
-               BuildableName = "NativeCurlRunnerTests.xctest"
-               BlueprintName = "NativeCurlRunnerTests"
-               ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+               BuildableName = "CurlyTests.xctest"
+               BlueprintName = "CurlyTests"
+               ReferencedContainer = "container:Curly.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -48,9 +48,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "B00000410000000000000001"
-               BuildableName = "NativeCurlRunnerTests.xctest"
-               BlueprintName = "NativeCurlRunnerTests"
-               ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+               BuildableName = "CurlyTests.xctest"
+               BlueprintName = "CurlyTests"
+               ReferencedContainer = "container:Curly.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -58,9 +58,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A00000410000000000000001"
-            BuildableName = "NativeCurlRunner.app"
-            BlueprintName = "NativeCurlRunner"
-            ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+            BuildableName = "Curly.app"
+            BlueprintName = "Curly"
+            ReferencedContainer = "container:Curly.xcodeproj">
          </BuildableReference>
       </MacroExpansion>
    </TestAction>
@@ -79,9 +79,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A00000410000000000000001"
-            BuildableName = "NativeCurlRunner.app"
-            BlueprintName = "NativeCurlRunner"
-            ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+            BuildableName = "Curly.app"
+            BlueprintName = "Curly"
+            ReferencedContainer = "container:Curly.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -96,9 +96,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A00000410000000000000001"
-            BuildableName = "NativeCurlRunner.app"
-            BlueprintName = "NativeCurlRunner"
-            ReferencedContainer = "container:NativeCurlRunner.xcodeproj">
+            BuildableName = "Curly.app"
+            BlueprintName = "Curly"
+            ReferencedContainer = "container:Curly.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

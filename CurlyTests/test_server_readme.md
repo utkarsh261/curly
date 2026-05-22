@@ -1,6 +1,6 @@
 # Test Server
 
-A lightweight HTTP test server for developing and testing NativeCurlRunner.
+A lightweight HTTP test server for developing and testing Curly.
 Built with Python stdlib — zero dependencies.
 
 ## Quick Start
@@ -12,7 +12,7 @@ just test-server
 Or directly:
 
 ```bash
-python3 NativeCurlRunnerTests/test_server.py
+python3 CurlyTests/test_server.py
 ```
 
 Server starts on **http://localhost:9999**. Press `Ctrl+C` to stop.
@@ -127,7 +127,7 @@ curl -X PROPFIND http://localhost:9999/anything/custom/path
 ```swift
 let server = Process()
 server.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-server.arguments = ["NativeCurlRunnerTests/test_server.py"]
+server.arguments = ["CurlyTests/test_server.py"]
 try server.run()
 defer { server.terminate() }
 

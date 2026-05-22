@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 @main
-struct NativeCurlRunnerApp: App {
+struct CurlyApp: App {
     @StateObject private var coordinator: SessionCoordinator
 #if DEBUG
     @State private var didApplyUITestURLBarInput = false
@@ -58,7 +58,7 @@ struct NativeCurlRunnerApp: App {
 #endif
 }
 
-private extension NativeCurlRunnerApp {
+private extension CurlyApp {
     static func makeCoordinator() -> SessionCoordinator {
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ui-test-stub-executor") {

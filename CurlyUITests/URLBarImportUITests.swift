@@ -353,7 +353,7 @@ final class URLBarImportUITests: XCTestCase {
             return
         }
 
-        XCTFail("Could not find the NativeCurlRunner menu bar status item.")
+        XCTFail("Could not find the Curly menu bar status item.")
     }
 
     private func menuElement(_ title: String, app: XCUIApplication) -> XCUIElement {
@@ -419,7 +419,7 @@ private final class UITestLocalHTTPServer {
         let scriptURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("NativeCurlRunnerTests/test_server.py")
+            .appendingPathComponent("CurlyTests/test_server.py")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         process.arguments = [scriptURL.path]

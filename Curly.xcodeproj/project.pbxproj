@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A00000010000000000000001 /* NativeCurlRunnerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000001 /* NativeCurlRunnerApp.swift */; };
+		A00000010000000000000001 /* CurlyApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000001 /* CurlyApp.swift */; };
 		A00000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000003 /* Models.swift */; };
 		A00000010000000000000004 /* SessionCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000004 /* SessionCoordinator.swift */; };
 		A00000010000000000000005 /* WorkspaceRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000005 /* WorkspaceRootView.swift */; };
@@ -39,37 +39,37 @@
 			containerPortal = A00000610000000000000001 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = A00000410000000000000001;
-			remoteInfo = NativeCurlRunner;
+			remoteInfo = Curly;
 		};
 		C00000210000000000000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A00000610000000000000001 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = A00000410000000000000001;
-			remoteInfo = NativeCurlRunner;
+			remoteInfo = Curly;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A00000110000000000000001 /* NativeCurlRunnerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCurlRunnerApp.swift; sourceTree = "<group>"; };
+		A00000110000000000000001 /* CurlyApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurlyApp.swift; sourceTree = "<group>"; };
 		A00000110000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		A00000110000000000000004 /* SessionCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinator.swift; sourceTree = "<group>"; };
 		A00000110000000000000005 /* WorkspaceRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootView.swift; sourceTree = "<group>"; };
 		A00000110000000000000006 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
-		A00000110000000000000007 /* NativeCurlRunner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NativeCurlRunner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000110000000000000007 /* Curly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Curly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000110000000000000008 /* CurlImporting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurlImporting.swift; sourceTree = "<group>"; };
 		A00000110000000000000009 /* SimpleCurlImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporter.swift; sourceTree = "<group>"; };
 		A00000110000000000000010 /* URLInputField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLInputField.swift; sourceTree = "<group>"; };
 		A00000110000000000000011 /* RequestExecuting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecuting.swift; sourceTree = "<group>"; };
 		A00000110000000000000012 /* ResponseFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseFormatting.swift; sourceTree = "<group>"; };
-		A00000110000000000000013 /* NativeCurlRunner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = NativeCurlRunner.entitlements; sourceTree = "<group>"; };
+		A00000110000000000000013 /* Curly.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Curly.entitlements; sourceTree = "<group>"; };
 		A00000110000000000000014 /* JSONEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONEditing.swift; sourceTree = "<group>"; };
 		A00000110000000000000015 /* JSONCodeEditorTextKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorTextKit.swift; sourceTree = "<group>"; };
 		A00000110000000000000017 /* ColorExtensions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorExtensions.swift; sourceTree = "<group>"; };
 		A00000110000000000000016 /* JSONCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONCodeEditorView.swift; sourceTree = "<group>"; };
 		B00000110000000000000001 /* SessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinatorTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000002 /* SimpleCurlImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporterTests.swift; sourceTree = "<group>"; };
-		B00000110000000000000003 /* NativeCurlRunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B00000110000000000000003 /* CurlyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurlyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B00000110000000000000004 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 		B00000110000000000000005 /* RequestValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestValidationTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000006 /* RequestExecutorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestExecutorTests.swift; sourceTree = "<group>"; };
@@ -77,7 +77,7 @@
 		B00000110000000000000008 /* JSONEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONEditingTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONTextKitFoldingSpikeTests.swift; sourceTree = "<group>"; };
 		C00000110000000000000001 /* URLBarImportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLBarImportUITests.swift; sourceTree = "<group>"; };
-		C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = NativeCurlRunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		C00000110000000000000002 /* CurlyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurlyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -118,15 +118,15 @@
 		A00000310000000000000001 = {
 			isa = PBXGroup;
 			children = (
-				A00000310000000000000002 /* NativeCurlRunner */,
-				B00000310000000000000002 /* NativeCurlRunnerTests */,
-				C00000310000000000000002 /* NativeCurlRunnerUITests */,
+				A00000310000000000000002 /* Curly */,
+				B00000310000000000000002 /* CurlyTests */,
+				C00000310000000000000002 /* CurlyUITests */,
 				A00000310000000000000003 /* Products */,
 				5E5FC9CC2FBE31C60004F011 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
-		A00000310000000000000002 /* NativeCurlRunner */ = {
+		A00000310000000000000002 /* Curly */ = {
 			isa = PBXGroup;
 			children = (
 				A00000310000000000000004 /* App */,
@@ -135,15 +135,15 @@
 				A00000310000000000000008 /* Infrastructure */,
 				A00000310000000000000007 /* Presentation */,
 			);
-			path = NativeCurlRunner;
+			path = Curly;
 			sourceTree = "<group>";
 		};
 		A00000310000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A00000110000000000000007 /* NativeCurlRunner.app */,
-				B00000110000000000000003 /* NativeCurlRunnerTests.xctest */,
-				C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */,
+				A00000110000000000000007 /* Curly.app */,
+				B00000110000000000000003 /* CurlyTests.xctest */,
+				C00000110000000000000002 /* CurlyUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -151,8 +151,8 @@
 		A00000310000000000000004 /* App */ = {
 			isa = PBXGroup;
 			children = (
-				A00000110000000000000001 /* NativeCurlRunnerApp.swift */,
-				A00000110000000000000013 /* NativeCurlRunner.entitlements */,
+				A00000110000000000000001 /* CurlyApp.swift */,
+				A00000110000000000000013 /* Curly.entitlements */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -198,7 +198,7 @@
 			path = Infrastructure;
 			sourceTree = "<group>";
 		};
-		B00000310000000000000002 /* NativeCurlRunnerTests */ = {
+		B00000310000000000000002 /* CurlyTests */ = {
 			isa = PBXGroup;
 			children = (
 				B00000110000000000000005 /* RequestValidationTests.swift */,
@@ -209,23 +209,23 @@
 				B00000110000000000000008 /* JSONEditingTests.swift */,
 				B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */,
 			);
-			path = NativeCurlRunnerTests;
+			path = CurlyTests;
 			sourceTree = "<group>";
 		};
-		C00000310000000000000002 /* NativeCurlRunnerUITests */ = {
+		C00000310000000000000002 /* CurlyUITests */ = {
 			isa = PBXGroup;
 			children = (
 				C00000110000000000000001 /* URLBarImportUITests.swift */,
 			);
-			path = NativeCurlRunnerUITests;
+			path = CurlyUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		A00000410000000000000001 /* NativeCurlRunner */ = {
+		A00000410000000000000001 /* Curly */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = A00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunner" */;
+			buildConfigurationList = A00000810000000000000001 /* Build configuration list for PBXNativeTarget "Curly" */;
 			buildPhases = (
 				A00000510000000000000001 /* Sources */,
 				A00000210000000000000001 /* Frameworks */,
@@ -234,16 +234,16 @@
 			);
 			dependencies = (
 			);
-			name = NativeCurlRunner;
+			name = Curly;
 			packageProductDependencies = (
 			);
-			productName = NativeCurlRunner;
-			productReference = A00000110000000000000007 /* NativeCurlRunner.app */;
+			productName = Curly;
+			productReference = A00000110000000000000007 /* Curly.app */;
 			productType = "com.apple.product-type.application";
 		};
-		B00000410000000000000001 /* NativeCurlRunnerTests */ = {
+		B00000410000000000000001 /* CurlyTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = B00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerTests" */;
+			buildConfigurationList = B00000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyTests" */;
 			buildPhases = (
 				B00000510000000000000001 /* Sources */,
 				B00000310000000000000001 /* Frameworks */,
@@ -253,16 +253,16 @@
 			dependencies = (
 				B00000610000000000000001 /* PBXTargetDependency */,
 			);
-			name = NativeCurlRunnerTests;
+			name = CurlyTests;
 			packageProductDependencies = (
 			);
-			productName = NativeCurlRunnerTests;
-			productReference = B00000110000000000000003 /* NativeCurlRunnerTests.xctest */;
+			productName = CurlyTests;
+			productReference = B00000110000000000000003 /* CurlyTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		C00000410000000000000001 /* NativeCurlRunnerUITests */ = {
+		C00000410000000000000001 /* CurlyUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerUITests" */;
+			buildConfigurationList = C00000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyUITests" */;
 			buildPhases = (
 				C00000510000000000000001 /* Sources */,
 				C00000310000000000000001 /* Frameworks */,
@@ -272,11 +272,11 @@
 			dependencies = (
 				C00000610000000000000001 /* PBXTargetDependency */,
 			);
-			name = NativeCurlRunnerUITests;
+			name = CurlyUITests;
 			packageProductDependencies = (
 			);
-			productName = NativeCurlRunnerUITests;
-			productReference = C00000110000000000000002 /* NativeCurlRunnerUITests.xctest */;
+			productName = CurlyUITests;
+			productReference = C00000110000000000000002 /* CurlyUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -302,7 +302,7 @@
 					};
 				};
 			};
-			buildConfigurationList = A00000810000000000000002 /* Build configuration list for PBXProject "NativeCurlRunner" */;
+			buildConfigurationList = A00000810000000000000002 /* Build configuration list for PBXProject "Curly" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -316,9 +316,9 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				A00000410000000000000001 /* NativeCurlRunner */,
-				B00000410000000000000001 /* NativeCurlRunnerTests */,
-				C00000410000000000000001 /* NativeCurlRunnerUITests */,
+				A00000410000000000000001 /* Curly */,
+				B00000410000000000000001 /* CurlyTests */,
+				C00000410000000000000001 /* CurlyUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -328,7 +328,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A00000010000000000000001 /* NativeCurlRunnerApp.swift in Sources */,
+				A00000010000000000000001 /* CurlyApp.swift in Sources */,
 				A00000010000000000000003 /* Models.swift in Sources */,
 				A00000010000000000000004 /* SessionCoordinator.swift in Sources */,
 				A00000010000000000000005 /* WorkspaceRootView.swift in Sources */,
@@ -372,12 +372,12 @@
 /* Begin PBXTargetDependency section */
 		B00000610000000000000001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A00000410000000000000001 /* NativeCurlRunner */;
+			target = A00000410000000000000001 /* Curly */;
 			targetProxy = B00000210000000000000001 /* PBXContainerItemProxy */;
 		};
 		C00000610000000000000001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = A00000410000000000000001 /* NativeCurlRunner */;
+			target = A00000410000000000000001 /* Curly */;
 			targetProxy = C00000210000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -506,7 +506,7 @@
 		A00000710000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = NativeCurlRunner/App/NativeCurlRunner.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Curly/App/Curly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
@@ -515,7 +515,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = NativeCurlRunner;
+				INFOPLIST_KEY_CFBundleDisplayName = Curly;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -524,7 +524,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunner;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.Curly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -536,7 +536,7 @@
 		A00000710000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				CODE_SIGN_ENTITLEMENTS = NativeCurlRunner/App/NativeCurlRunner.entitlements;
+				CODE_SIGN_ENTITLEMENTS = Curly/App/Curly.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
@@ -545,7 +545,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = NativeCurlRunner;
+				INFOPLIST_KEY_CFBundleDisplayName = Curly;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -554,7 +554,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunner;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.Curly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -579,13 +579,13 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.CurlyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeCurlRunner.app/Contents/MacOS/NativeCurlRunner";
-				TEST_TARGET_NAME = NativeCurlRunner;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Curly.app/Contents/MacOS/Curly";
+				TEST_TARGET_NAME = Curly;
 			};
 			name = Debug;
 		};
@@ -605,13 +605,13 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.CurlyTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/NativeCurlRunner.app/Contents/MacOS/NativeCurlRunner";
-				TEST_TARGET_NAME = NativeCurlRunner;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Curly.app/Contents/MacOS/Curly";
+				TEST_TARGET_NAME = Curly;
 			};
 			name = Release;
 		};
@@ -630,12 +630,12 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.CurlyUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_VERSION = 6.0;
-				TEST_TARGET_NAME = NativeCurlRunner;
+				TEST_TARGET_NAME = Curly;
 			};
 			name = Debug;
 		};
@@ -654,19 +654,19 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.NativeCurlRunnerUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.CurlyUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_VERSION = 6.0;
-				TEST_TARGET_NAME = NativeCurlRunner;
+				TEST_TARGET_NAME = Curly;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunner" */ = {
+		A00000810000000000000001 /* Build configuration list for PBXNativeTarget "Curly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000710000000000000003 /* Debug */,
@@ -675,7 +675,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A00000810000000000000002 /* Build configuration list for PBXProject "NativeCurlRunner" */ = {
+		A00000810000000000000002 /* Build configuration list for PBXProject "Curly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				A00000710000000000000001 /* Debug */,
@@ -684,7 +684,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		B00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerTests" */ = {
+		B00000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				B00000710000000000000001 /* Debug */,
@@ -693,7 +693,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		C00000810000000000000001 /* Build configuration list for PBXNativeTarget "NativeCurlRunnerUITests" */ = {
+		C00000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C00000710000000000000001 /* Debug */,

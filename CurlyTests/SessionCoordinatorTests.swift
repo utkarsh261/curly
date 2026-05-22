@@ -1,5 +1,5 @@
 import XCTest
-@testable import NativeCurlRunner
+@testable import Curly
 
 @MainActor
 final class SessionCoordinatorTests: XCTestCase {

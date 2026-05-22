@@ -1,5 +1,5 @@
 import XCTest
-@testable import NativeCurlRunner
+@testable import Curly
 
 final class SimpleCurlImporterTests: XCTestCase {
     private let importer = SimpleCurlImporter()

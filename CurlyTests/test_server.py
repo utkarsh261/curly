@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight HTTP test server for NativeCurlRunner development and testing.
+"""Lightweight HTTP test server for Curly development and testing.
 
 Serves on http://localhost:9999.
 Supports common HTTP methods, content types, auth schemes, redirects,
@@ -61,7 +61,7 @@ COMPLEX_JSON = {
     "version": "2.0.1",
     "metadata": {
         "generated_at": "2026-05-21T12:00:00Z",
-        "author": "NativeCurlRunner Test Server",
+        "author": "Curly Test Server",
         "tags": ["test", "json", "parsing", "validation", "edge-cases"],
         "counts": {
             "total_keys": 47,
@@ -184,7 +184,7 @@ INDEX_HTML = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>NativeCurlRunner Test Server</title>
+<title>Curly Test Server</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; line-height: 1.6; }}
   h1 {{ border-bottom: 2px solid #eee; padding-bottom: 0.3em; }}
@@ -204,7 +204,7 @@ INDEX_HTML = f"""<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>NativeCurlRunner Test Server</h1>
+<h1>Curly Test Server</h1>
 <p>Listening on <strong>http://localhost:{PORT}</strong></p>
 
 <table>

@@ -18,7 +18,7 @@ PY
 }
 
 if ! server_reachable; then
-    /usr/bin/python3 NativeCurlRunnerTests/test_server.py >/tmp/native-curl-runner-test-server.log 2>&1 &
+    /usr/bin/python3 CurlyTests/test_server.py >/tmp/native-curl-runner-test-server.log 2>&1 &
     server_pid="$!"
 
     cleanup() {

@@ -40,13 +40,13 @@ jobs:
       - name: Rename DMG
         run: |
           TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          cp dist/NativeCurlRunner.dmg "dist/NativeCurlRunner-${TAG_NAME}.dmg"
+          cp dist/Curly.dmg "dist/Curly-${TAG_NAME}.dmg"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: NativeCurlRunner-dmg
-          path: dist/NativeCurlRunner-*.dmg
+          name: Curly-dmg
+          path: dist/Curly-*.dmg
           if-no-files-found: error
 
       - name: Publish GitHub Release
@@ -56,22 +56,22 @@ jobs:
         run: |
           gh release view "$TAG_NAME" >/dev/null 2>&1 || \
             gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes
-          gh release upload "$TAG_NAME" "dist/NativeCurlRunner-${TAG_NAME}.dmg" --clobber
+          gh release upload "$TAG_NAME" "dist/Curly-${TAG_NAME}.dmg" --clobber
 
       - name: Update Homebrew Cask
         run: |
           TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
           VERSION_CLEAN="${TAG_NAME#v}"
-          SHA256=$(shasum -a 256 "dist/NativeCurlRunner-${TAG_NAME}.dmg" | awk '{print $1}')
+          SHA256=$(shasum -a 256 "dist/Curly-${TAG_NAME}.dmg" | awk '{print $1}')
           
           git fetch origin main
           git checkout main
           
-          perl -pi -e "s/version \".*\"/version \"$VERSION_CLEAN\"/g" Casks/nativecurlrunner.rb
-          perl -pi -e "s/sha256 \".*\"/sha256 \"$SHA256\"/g" Casks/nativecurlrunner.rb
+          perl -pi -e "s/version \".*\"/version \"$VERSION_CLEAN\"/g" Casks/curly.rb
+          perl -pi -e "s/sha256 \".*\"/sha256 \"$SHA256\"/g" Casks/curly.rb
           
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/nativecurlrunner.rb
+          git add Casks/curly.rb
           git commit -m "chore: update Homebrew Cask to $TAG_NAME" || exit 0
           git push origin main
