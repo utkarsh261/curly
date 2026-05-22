@@ -3,8 +3,10 @@ set shell := ["zsh", "-cu"]
 project := "NativeCurlRunner.xcodeproj"
 scheme := "NativeCurlRunner"
 configuration := "Debug"
+release_configuration := "Release"
 sdk := "macosx"
 derived_data := "./.DerivedData"
+release_dir := "./dist"
 
 # List available commands.
 default:
@@ -37,3 +39,34 @@ test-server:
 # Remove local Xcode build products.
 clean:
     rm -rf {{derived_data}}
+
+# Build a Release app for distribution testing.
+build-release:
+    xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{release_configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} build
+
+# Prepare a free (ad-hoc signed) distributable app bundle in dist/.
+prepare-free-app: build-release
+    mkdir -p {{release_dir}}
+    rm -rf "{{release_dir}}/NativeCurlRunner.app"
+    cp -R "{{derived_data}}/Build/Products/{{release_configuration}}/NativeCurlRunner.app" "{{release_dir}}/NativeCurlRunner.app"
+    codesign --force --deep --sign - "{{release_dir}}/NativeCurlRunner.app"
+
+# Create distributable zip from ad-hoc signed app.
+package-zip-free: prepare-free-app
+    rm -f "{{release_dir}}/NativeCurlRunner.zip"
+    ditto -c -k --keepParent "{{release_dir}}/NativeCurlRunner.app" "{{release_dir}}/NativeCurlRunner.zip"
+
+# Create distributable dmg from ad-hoc signed app.
+package-dmg-free: prepare-free-app
+    rm -f "{{release_dir}}/NativeCurlRunner.dmg"
+    hdiutil create -volname "NativeCurlRunner" -srcfolder "{{release_dir}}/NativeCurlRunner.app" -ov -format UDZO "{{release_dir}}/NativeCurlRunner.dmg"
+
+# Create styled drag-to-Applications dmg from ad-hoc signed app.
+package-dmg-styled-free: prepare-free-app
+    rm -f "{{release_dir}}/NativeCurlRunner.dmg"
+    zsh ./scripts/create_styled_dmg.sh "{{release_dir}}/NativeCurlRunner.app" "{{release_dir}}/NativeCurlRunner.dmg" "NativeCurlRunner"
+
+# Validate code signature and Gatekeeper assessment for packaged app.
+verify-package-free:
+    codesign --verify --deep --strict --verbose=2 "{{release_dir}}/NativeCurlRunner.app"
+    spctl --assess --type execute --verbose=4 "{{release_dir}}/NativeCurlRunner.app" || true

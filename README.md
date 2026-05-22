@@ -8,11 +8,26 @@ Use the `just` commands below as the canonical build and test interface for both
 
 ```sh
 just build
+just build-release
+just package-zip-free
+just package-dmg-free
+just package-dmg-styled-free
+just verify-package-free
 just test
 just test-unit
 just test-ui
 just test-one NativeCurlRunnerUITests/URLBarImportUITests/testImportedCurlHeadersAreUsedWhenRunningRequest
 ```
+
+`just package-zip-free` builds a Release app, applies ad-hoc signing (`codesign -s -`), and writes `dist/NativeCurlRunner.zip`.
+
+`just package-dmg-free` builds/signs similarly and writes `dist/NativeCurlRunner.dmg`.
+
+`just package-dmg-styled-free` builds/signs and creates a drag-to-Applications style DMG layout (app icon + Applications alias in Finder). This command uses Finder automation via `osascript`, so it must run in a normal logged-in macOS session.
+
+On tester Macs, first launch may still require manual trust:
+1. Right-click `NativeCurlRunner.app` and choose `Open`.
+2. Confirm `Open` in the warning dialog (or use System Settings > Privacy & Security > Open Anyway).
 
 If `just` is not installed:
 
