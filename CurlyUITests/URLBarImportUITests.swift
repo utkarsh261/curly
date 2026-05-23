@@ -1,6 +1,5 @@
 import XCTest
 import Foundation
-import AppKit
 
 @MainActor
 final class URLBarImportUITests: XCTestCase {
@@ -301,7 +300,7 @@ final class URLBarImportUITests: XCTestCase {
         usesFailingExecutor: Bool = false
     ) -> (XCUIApplication, XCUIElement) {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-test-url-bar-input", input]
+        app.launchArguments = ["--ui-test-mode", "--ui-test-url-bar-input", input]
         if usesStubExecutor {
             app.launchArguments.append("--ui-test-stub-executor")
         }
@@ -317,6 +316,7 @@ final class URLBarImportUITests: XCTestCase {
 
     private func launchEmptyApp() -> XCUIApplication {
         let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-mode"]
         app.launch()
 
         let urlField = app.textFields["url-input-field"].firstMatch
@@ -325,12 +325,11 @@ final class URLBarImportUITests: XCTestCase {
     }
 
     private func paste(_ text: String, into element: XCUIElement) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-
+        XCTAssertTrue(element.waitForExistence(timeout: 2), "Expected URL field to exist before typing.")
         element.click()
         element.typeKey("a", modifierFlags: .command)
-        element.typeKey("v", modifierFlags: .command)
+        element.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        element.typeText(text)
     }
 
     private func openMenuBarExtra(app: XCUIApplication) {

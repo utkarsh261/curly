@@ -5,9 +5,18 @@ struct WorkspaceRootView: View {
     @FocusState private var isURLFieldFocused: Bool
     @State private var pendingURLInput = ""
     @State private var responseFoldedRanges: [NSRange] = []
+    @State private var pendingDeleteRequest: RequestListItem?
 
     var body: some View {
         HSplitView {
+            if coordinator.state.isLibraryCollapsed {
+                collapsedLibraryRail
+                    .frame(minWidth: 52, idealWidth: 52, maxWidth: 52)
+            } else {
+                libraryPane
+                    .frame(minWidth: 220, idealWidth: 220, maxWidth: 220)
+            }
+
             requestPane
                 .frame(minWidth: 360, idealWidth: 420)
 
@@ -32,6 +41,25 @@ struct WorkspaceRootView: View {
         } message: {
             Text(replacementDialogMessage)
         }
+        .confirmationDialog(
+            "Delete Request?",
+            isPresented: Binding(
+                get: { pendingDeleteRequest != nil },
+                set: { isPresented in if !isPresented { pendingDeleteRequest = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                guard let pendingDeleteRequest else { return }
+                coordinator.deleteSavedRequest(id: pendingDeleteRequest.id)
+                self.pendingDeleteRequest = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteRequest = nil
+            }
+        } message: {
+            Text(pendingDeleteRequest?.name ?? "")
+        }
         .onAppear {
             pendingURLInput = coordinator.state.workspaceRequest.urlString
             if coordinator.state.workspaceRequest.urlString.isEmpty {
@@ -45,6 +73,13 @@ struct WorkspaceRootView: View {
                 pendingURLInput = newValue
             }
         }
+    }
+
+    private var workspaceNameBinding: Binding<String> {
+        Binding(
+            get: { coordinator.state.workspaceName },
+            set: { coordinator.updateWorkspaceName($0) }
+        )
     }
 
     private var methodBinding: Binding<HTTPMethod> {
@@ -87,6 +122,8 @@ struct WorkspaceRootView: View {
         GeometryReader { geometry in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    requestHeader
+
                     paneTitle(
                         title: "Request",
                         icon: "square.and.pencil",
@@ -125,6 +162,215 @@ struct WorkspaceRootView: View {
             }
         }
         .background(Color.surfaceGrouped)
+    }
+
+    private var requestHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                TextField("Request Name", text: workspaceNameBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("request-name-field")
+
+                Button {
+                    coordinator.saveCurrentRequest()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.accent)
+                .help("Save Request")
+                .disabled(!coordinator.state.canSaveCurrentRequest)
+                .accessibilityIdentifier("save-request-button")
+
+                Button {
+                    coordinator.revertCurrentRequestDraft()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                }
+                .buttonStyle(.bordered)
+                .help("Revert to Saved")
+                .disabled(!coordinator.state.canRevertCurrentRequest)
+                .accessibilityIdentifier("revert-request-button")
+
+                Button {
+                    coordinator.deleteCurrentRequest()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered)
+                .help("Delete request")
+                .disabled(coordinator.state.selectedSavedRequestID == nil)
+                .accessibilityIdentifier("discard-hidden-draft-button")
+            }
+
+            if let persistenceWarningMessage = coordinator.state.persistenceWarningMessage {
+                InlineMessageCard(
+                    title: "Persistence Warning",
+                    message: persistenceWarningMessage,
+                    severity: .warning
+                )
+            }
+        }
+    }
+
+    private var libraryPane: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            libraryHeader
+
+            List {
+                ForEach(coordinator.state.requestListItems) { item in
+                    Button {
+                        coordinator.selectSavedRequest(id: item.id)
+                    } label: {
+                        requestListRow(item)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Revert Draft") {
+                            coordinator.revertSavedRequestDraft(id: item.id)
+                        }
+                        .disabled(!item.isDirty)
+                        Button("Delete", role: .destructive) {
+                            pendingDeleteRequest = item
+                        }
+                    }
+                    .padding(.vertical, 1)
+                    .listRowBackground(
+                        rowBackground(isSelected: coordinator.state.selectedSavedRequestID == item.id)
+                    )
+                }
+            }
+            .listStyle(.sidebar)
+            .accessibilityIdentifier("saved-requests-list")
+            .overlay(alignment: .center) {
+                if coordinator.state.requestListItems.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "tray")
+                            .font(.system(size: 24, weight: .regular))
+                            .foregroundStyle(Color.textMuted)
+                        Text("No saved requests")
+                            .font(.subheadline.weight(.semibold))
+                        Text("Create one from the current editor.")
+                            .font(.caption)
+                            .foregroundStyle(Color.textMuted)
+                    }
+                    .padding(16)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private var libraryHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Requests")
+                        .font(.headline.weight(.semibold))
+                }
+                Spacer()
+                Button {
+                    coordinator.toggleLibraryCollapsed()
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Collapse request list")
+                .accessibilityIdentifier("toggle-library-button")
+
+                Button {
+                    coordinator.createOrFocusHiddenNewDraft()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.accent)
+                .controlSize(.small)
+                .help("New request")
+                .accessibilityIdentifier("new-request-button")
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.surfaceRaised)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color.borderSubtle, lineWidth: 1)
+                )
+        )
+    }
+
+    private var collapsedLibraryRail: some View {
+        VStack(spacing: 10) {
+            Button {
+                coordinator.setLibraryCollapsed(false)
+            } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .help("Show request list")
+            .accessibilityIdentifier("expand-library-button")
+
+            Button {
+                coordinator.createOrFocusHiddenNewDraft()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.accent)
+            .controlSize(.small)
+            .help("New request")
+            .accessibilityIdentifier("collapsed-new-request-button")
+
+            Spacer()
+        }
+        .padding(.top, 12)
+        .padding(.horizontal, 8)
+        .background(Color(nsColor: .underPageBackgroundColor))
+    }
+
+    private func requestListRow(_ item: RequestListItem) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(item.method.rawValue)
+                    .font(.caption.monospaced().weight(.semibold))
+                    .foregroundStyle(Color.accent)
+                Text(item.name)
+                    .lineLimit(1)
+                if item.isDirty {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 6, height: 6)
+                        .accessibilityIdentifier("request-dirty-dot-\(item.id.uuidString)")
+                }
+            }
+            Text(item.urlPreview)
+                .font(.caption)
+                .foregroundStyle(Color.textMuted)
+                .lineLimit(1)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("saved-request-row")
+    }
+
+
+    private func rowBackground(isSelected: Bool) -> some View {
+        Group {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accent.opacity(0.17))
+            } else {
+                Color.clear
+            }
+        }
     }
 
     private var responsePane: some View {
