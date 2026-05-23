@@ -271,6 +271,16 @@ struct RequestEditorExpansionState: Equatable {
 
 struct SessionState: Equatable {
     var workspaceRequest: Request
+    var workspaceName: String
+    var requestListItems: [RequestListItem]
+    var isLibraryCollapsed: Bool
+    var selectedSavedRequestID: UUID?
+    var selectedRequestContext: SelectionContext
+    var isCurrentRequestDirty: Bool
+    var canSaveCurrentRequest: Bool
+    var canRevertCurrentRequest: Bool
+    var canDiscardHiddenNewDraft: Bool
+    var persistenceWarningMessage: String?
     var lastExecutedRequest: LastExecutedRequest?
     var executionState: ExecutionState
     var visibleResponseState: VisibleResponseState?
@@ -281,6 +291,16 @@ struct SessionState: Equatable {
 
     init(
         workspaceRequest: Request,
+        workspaceName: String = "Untitled Request",
+        requestListItems: [RequestListItem] = [],
+        isLibraryCollapsed: Bool = false,
+        selectedSavedRequestID: UUID? = nil,
+        selectedRequestContext: SelectionContext = .hiddenNewDraft,
+        isCurrentRequestDirty: Bool = false,
+        canSaveCurrentRequest: Bool = false,
+        canRevertCurrentRequest: Bool = false,
+        canDiscardHiddenNewDraft: Bool = false,
+        persistenceWarningMessage: String? = nil,
         lastExecutedRequest: LastExecutedRequest?,
         executionState: ExecutionState,
         visibleResponseState: VisibleResponseState?,
@@ -291,6 +311,16 @@ struct SessionState: Equatable {
         requestEditorExpansion: RequestEditorExpansionState = .allExpanded
     ) {
         self.workspaceRequest = workspaceRequest
+        self.workspaceName = workspaceName
+        self.requestListItems = requestListItems
+        self.isLibraryCollapsed = isLibraryCollapsed
+        self.selectedSavedRequestID = selectedSavedRequestID
+        self.selectedRequestContext = selectedRequestContext
+        self.isCurrentRequestDirty = isCurrentRequestDirty
+        self.canSaveCurrentRequest = canSaveCurrentRequest
+        self.canRevertCurrentRequest = canRevertCurrentRequest
+        self.canDiscardHiddenNewDraft = canDiscardHiddenNewDraft
+        self.persistenceWarningMessage = persistenceWarningMessage
         self.lastExecutedRequest = lastExecutedRequest
         self.executionState = executionState
         self.visibleResponseState = visibleResponseState
@@ -302,6 +332,16 @@ struct SessionState: Equatable {
 
     static let initial = SessionState(
         workspaceRequest: .empty,
+        workspaceName: "Untitled Request",
+        requestListItems: [],
+        isLibraryCollapsed: false,
+        selectedSavedRequestID: nil,
+        selectedRequestContext: .hiddenNewDraft,
+        isCurrentRequestDirty: false,
+        canSaveCurrentRequest: false,
+        canRevertCurrentRequest: false,
+        canDiscardHiddenNewDraft: false,
+        persistenceWarningMessage: nil,
         lastExecutedRequest: nil,
         executionState: .idle,
         visibleResponseState: nil,

@@ -3,13 +3,16 @@ import SwiftUI
 
 @main
 struct CurlyApp: App {
+    @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self) private var appDelegate
     @StateObject private var coordinator: SessionCoordinator
 #if DEBUG
     @State private var didApplyUITestURLBarInput = false
 #endif
 
     init() {
-        _coordinator = StateObject(wrappedValue: Self.makeCoordinator())
+        let createdCoordinator = Self.makeCoordinator()
+        _coordinator = StateObject(wrappedValue: createdCoordinator)
+        appDelegate.coordinatorProvider = { createdCoordinator }
     }
 
     var body: some Scene {
@@ -58,14 +61,69 @@ struct CurlyApp: App {
 #endif
 }
 
+final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    var coordinatorProvider: (() -> SessionCoordinator?)?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let coordinator = coordinatorProvider?() else {
+            return .terminateNow
+        }
+
+        Task {
+            await coordinator.waitForPendingPersistence()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
 private extension CurlyApp {
     static func makeCoordinator() -> SessionCoordinator {
+        let arguments = ProcessInfo.processInfo.arguments
 #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ui-test-stub-executor") {
-            return SessionCoordinator(requestExecutor: UITestEchoRequestExecutor())
+        if arguments.contains("--ui-test-stub-executor") {
+            return SessionCoordinator(
+                requestExecutor: UITestEchoRequestExecutor(),
+                requestLibrary: makeRequestLibraryDependencies(arguments: arguments)
+            )
         }
 #endif
-        return SessionCoordinator()
+        return SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
+    }
+
+    static func makeRequestLibraryDependencies(arguments: [String]) -> RequestLibraryDependencies? {
+#if DEBUG
+        if arguments.contains("--ui-test-mode"), !arguments.contains("--ui-test-enable-persistence") {
+            return nil
+        }
+#endif
+        do {
+            let fileURL: URL
+#if DEBUG
+            if let index = arguments.firstIndex(of: "--ui-test-library-file"),
+               arguments.indices.contains(index + 1) {
+                fileURL = URL(fileURLWithPath: arguments[index + 1])
+            } else {
+                fileURL = try FileRequestLibraryRepositories.defaultFileURL()
+            }
+#else
+            fileURL = try FileRequestLibraryRepositories.defaultFileURL()
+#endif
+            let repositories = try FileRequestLibraryRepositories(fileURL: fileURL)
+            return RequestLibraryDependencies(
+                savedRequests: repositories,
+                drafts: repositories,
+                hiddenDraft: repositories,
+                summaries: repositories,
+                selection: repositories,
+                workspaceFacade: repositories
+            )
+        } catch {
+#if DEBUG
+            print("Curly persistence init failed: \(error.localizedDescription)")
+#endif
+            return nil
+        }
     }
 }
 
@@ -108,9 +166,14 @@ struct WorkspaceCommands: Commands {
     var body: some Commands {
         CommandMenu("Workspace") {
             Button("New Workspace") {
-                coordinator.newWorkspace()
+                coordinator.createOrFocusHiddenNewDraft()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Button("Save Request") {
+                coordinator.saveCurrentRequest()
+            }
+            .keyboardShortcut("s", modifiers: [.command])
 
             Divider()
 
