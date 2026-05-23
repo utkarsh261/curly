@@ -179,7 +179,14 @@ struct WorkspaceCommands: Commands {
 
             Button("Open Main Window") {
                 coordinator.requestWindowOpen()
-                openWindow(id: "main")
+                if let lastID = coordinator.globalLastExecutedRequestID {
+                    coordinator.selectSavedRequest(id: lastID)
+                }
+                if let existingWindow = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {
+                    existingWindow.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
                 NSApp.activate(ignoringOtherApps: true)
             }
             .keyboardShortcut("0", modifiers: [.command])

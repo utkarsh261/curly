@@ -5,7 +5,7 @@ struct MenuBarLabelView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
 
     var body: some View {
-        Label(coordinator.state.statusTitle, systemImage: coordinator.state.statusIconName)
+        Label(coordinator.hudStatusTitle, systemImage: coordinator.hudStatusIconName)
             .accessibilityIdentifier("menu-bar-status-item")
     }
 }
@@ -26,7 +26,7 @@ struct MenuBarView: View {
                         .font(.system(size: 17, weight: .regular, design: .rounded).monospacedDigit())
                         .foregroundStyle(statusColor)
                         .accessibilityIdentifier("menu-bar-status-title")
-                    Text(coordinator.state.statusSubtitle)
+                    Text(coordinator.hudStatusSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -39,12 +39,20 @@ struct MenuBarView: View {
             Button("Rerun Last Request") {
                 coordinator.rerunLastRequest()
             }
-            .disabled(!coordinator.state.canRerun)
+            .disabled(!coordinator.hudCanRerun)
             .accessibilityIdentifier("rerun-last-request-menu-button")
 
             Button("Open Window") {
                 coordinator.requestWindowOpen()
-                openWindow(id: "main")
+                if let lastID = coordinator.globalLastExecutedRequestID {
+                    coordinator.selectSavedRequest(id: lastID)
+                }
+                
+                if let existingWindow = NSApp.windows.first(where: { $0.styleMask.contains(.titled) }) {
+                    existingWindow.makeKeyAndOrderFront(nil)
+                } else {
+                    openWindow(id: "main")
+                }
                 NSApp.activate(ignoringOtherApps: true)
             }
             .accessibilityIdentifier("open-main-window-menu-button")
@@ -69,19 +77,19 @@ struct MenuBarView: View {
     }
 
     private var statusCodeText: String {
-        if let statusCode = coordinator.state.visibleResponseState?.summary.statusCode {
+        if let statusCode = coordinator.globalVisibleResponseState?.summary.statusCode {
             return "\(statusCode)"
         }
-        if coordinator.state.executionState == .running {
+        if coordinator.globalExecutionState == .running {
             return "..."
         }
         return "--"
     }
 
     private var statusColor: Color {
-        switch coordinator.state.statusTone {
+        switch coordinator.hudStatusTone {
         case .neutral:
-            if coordinator.state.executionState == .running {
+            if coordinator.globalExecutionState == .running {
                 return .orange
             }
             return .secondary
@@ -95,9 +103,9 @@ struct MenuBarView: View {
     }
 
     private var statusMarkKind: StatusMarkKind {
-        switch coordinator.state.statusTone {
+        switch coordinator.hudStatusTone {
         case .neutral:
-            if coordinator.state.executionState == .running {
+            if coordinator.globalExecutionState == .running {
                 return .running
             }
             return .idle

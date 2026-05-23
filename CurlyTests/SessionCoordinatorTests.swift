@@ -553,6 +553,74 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.canRerun)
     }
 
+    func testGlobalExecutionStateCorrectlyTracksLastExecutedAcrossNavigation() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        
+        // 1. Initially HUD should be idle
+        XCTAssertEqual(coordinator.globalExecutionState, .idle)
+        XCTAssertNil(coordinator.globalLastExecutedRequestID)
+        XCTAssertNil(coordinator.globalLastExecutedRequest)
+        XCTAssertFalse(coordinator.hudCanRerun)
+        
+        // 2. Select and run Request 1
+        coordinator.setURL("https://example.com/request1")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        
+        XCTAssertEqual(coordinator.globalExecutionState, .running)
+        
+        let request1 = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request1,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("response1".utf8),
+                mimeType: "text/plain",
+                duration: 0.05,
+                timestamp: Date()
+            )
+        )
+        await waitUntil { coordinator.globalExecutionState == .succeeded }
+        
+        XCTAssertEqual(coordinator.globalExecutionState, .succeeded)
+        XCTAssertEqual(coordinator.globalVisibleResponseState?.summary.statusCode, 200)
+        XCTAssertTrue(coordinator.hudCanRerun)
+        
+        // 3. Navigate away to Request 2 (change URL to simulate editing or new draft)
+        coordinator.setURL("https://example.com/request2")
+        // Since workspace request changed, active state might become stale/idle,
+        // but global HUD point of reference MUST remain Request 1!
+        XCTAssertEqual(coordinator.globalExecutionState, .succeeded)
+        XCTAssertEqual(coordinator.globalVisibleResponseState?.summary.statusCode, 200)
+        XCTAssertTrue(coordinator.hudCanRerun)
+        XCTAssertEqual(coordinator.hudStatusTitle, "Status 200")
+        
+        // 4. Retrigger from HUD (rerun last request) should switch back/rerun request 1
+        coordinator.rerunLastRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        
+        let rerunRequest = await executor.invocations[1]
+        XCTAssertEqual(rerunRequest.urlString, "https://example.com/request1")
+        
+        // Resume second execution
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: rerunRequest,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("response1".utf8),
+                mimeType: "text/plain",
+                duration: 0.05,
+                timestamp: Date()
+            )
+        )
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 1,
         condition: @escaping @MainActor () async -> Bool

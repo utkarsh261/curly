@@ -36,6 +36,13 @@ final class SessionCoordinator: ObservableObject {
     private var pendingPersistenceTasks: [UUID: Task<Void, Never>] = [:]
     private var persistenceChain = Task { }
 
+    // Global executed state tracker for Menu Bar Extra HUD
+    @Published private(set) var globalLastExecutedRequestID: UUID?
+    @Published private(set) var globalLastExecutedRequest: LastExecutedRequest?
+    @Published private(set) var globalExecutionState: ExecutionState = .idle
+    @Published private(set) var globalVisibleResponseState: VisibleResponseState?
+    @Published private(set) var globalInlineMessage: InlineMessage?
+
     @Published private(set) var state: SessionState = .initial
 
     init(
@@ -46,6 +53,10 @@ final class SessionCoordinator: ObservableObject {
         requestLibrary: RequestLibraryDependencies? = nil
     ) {
         self.state = initialState
+        self.globalExecutionState = initialState.executionState
+        self.globalLastExecutedRequest = initialState.lastExecutedRequest
+        self.globalVisibleResponseState = initialState.visibleResponseState
+        self.globalLastExecutedRequestID = initialState.selectedSavedRequestID
         self.curlImporter = curlImporter
         self.requestExecutor = requestExecutor
         self.responseFormatter = responseFormatter
@@ -235,10 +246,13 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func rerunLastRequest() {
-        guard let request = state.lastExecutedRequest?.request else {
+        guard let requestID = globalLastExecutedRequestID else {
+            guard let request = globalLastExecutedRequest?.request else { return }
+            startExecution(using: request)
             return
         }
-        startExecution(using: request)
+        selectSavedRequest(id: requestID)
+        startExecution(using: state.workspaceRequest)
     }
 
     func updateWorkspaceName(_ name: String) {
@@ -379,6 +393,13 @@ final class SessionCoordinator: ObservableObject {
             selectedSavedRequestID = nil
             selectNextContextAfterDelete()
         }
+        if globalLastExecutedRequestID == id {
+            globalLastExecutedRequestID = nil
+            globalLastExecutedRequest = nil
+            globalExecutionState = .idle
+            globalVisibleResponseState = nil
+            globalInlineMessage = nil
+        }
         enqueuePersistenceTask(errorPrefix: "Failed to delete request") {
             try await requestLibrary.workspaceFacade.deleteSavedRequestAndRelatedState(id: id)
         }
@@ -468,12 +489,21 @@ final class SessionCoordinator: ObservableObject {
         guard request.isMinimallyValid else {
             state.executionState = .failed
             setInlineError(request.lightweightValidationMessage ?? "The request is not runnable yet.")
+            globalExecutionState = .failed
+            globalInlineMessage = InlineMessage(severity: .error, text: request.lightweightValidationMessage ?? "The request is not runnable yet.")
             return
         }
 
         state.executionState = .running
         clearInlineMessage()
         state.lastExecutedRequest = LastExecutedRequest(request: request)
+        
+        globalExecutionState = .running
+        globalInlineMessage = nil
+        globalLastExecutedRequest = LastExecutedRequest(request: request)
+        globalLastExecutedRequestID = selectedSavedRequestID
+        globalVisibleResponseState = nil
+        
         let previousResponseMode = state.visibleResponseState?.selectedMode
         let runningRequestID = selectedSavedRequestID
 
@@ -497,6 +527,10 @@ final class SessionCoordinator: ObservableObject {
                     if let runningRequestID {
                         self.executionStatesByRequestID[runningRequestID] = execState
                     }
+                    
+                    self.globalExecutionState = .succeeded
+                    self.globalVisibleResponseState = visibleResponseState
+                    self.globalInlineMessage = nil
                     
                     if self.selectedSavedRequestID == runningRequestID {
                         self.state.visibleResponseState = visibleResponseState
@@ -525,6 +559,10 @@ final class SessionCoordinator: ObservableObject {
                         self.executionStatesByRequestID[runningRequestID] = execState
                     }
                     
+                    self.globalExecutionState = .failed
+                    self.globalVisibleResponseState = nil
+                    self.globalInlineMessage = InlineMessage(severity: .error, text: error.localizedDescription)
+                    
                     if self.selectedSavedRequestID == runningRequestID {
                         self.state.executionState = .failed
                         self.setInlineError(error.localizedDescription)
@@ -541,6 +579,10 @@ final class SessionCoordinator: ObservableObject {
                     if let runningRequestID {
                         self.executionStatesByRequestID[runningRequestID] = execState
                     }
+                    
+                    self.globalExecutionState = .failed
+                    self.globalVisibleResponseState = nil
+                    self.globalInlineMessage = InlineMessage(severity: .error, text: error.localizedDescription)
                     
                     if self.selectedSavedRequestID == runningRequestID {
                         self.state.executionState = .failed
@@ -629,14 +671,76 @@ final class SessionCoordinator: ObservableObject {
                 savedList = [initialRequest]
             }
             var loadedDrafts: [UUID: RequestDraft] = [:]
+            var loadedSummaries: [UUID: ExecutionSummary] = [:]
+            var loadedExecutionStates: [UUID: RequestExecutionState] = [:]
             for request in savedList {
                 if let draft = try await requestLibrary.drafts.draft(for: request.id) {
                     loadedDrafts[request.id] = draft
                 }
                 if let summary = try await requestLibrary.summaries.summary(for: request.id) {
-                    summariesByRequestID[request.id] = summary
+                    loadedSummaries[request.id] = summary
+                    
+                    let statusCode = summary.statusCode ?? 200
+                    let durationMs = summary.durationMs ?? 0
+                    let sizeBytes = summary.sizeBytes ?? 0
+                    let lastRunAt = summary.lastRunAt ?? Date()
+                    
+                    let responseTone: ResponseTone
+                    if statusCode >= 200 && statusCode < 300 {
+                        responseTone = .success
+                    } else if statusCode >= 300 && statusCode < 400 {
+                        responseTone = .warning
+                    } else {
+                        responseTone = .failure
+                    }
+                    
+                    let respSummary = ResponseSummary(
+                        statusCode: statusCode,
+                        durationDescription: "\(durationMs)ms",
+                        sizeDescription: ByteCountFormatter.string(fromByteCount: Int64(sizeBytes), countStyle: .file),
+                        timestampDescription: RelativeDateTimeFormatter().localizedString(for: lastRunAt, relativeTo: Date()),
+                        tone: responseTone
+                    )
+                    
+                    let dummyBody = ResponseBody(
+                        headerText: "",
+                        bodyText: "",
+                        isPreviewable: false,
+                        rawData: Data(),
+                        mimeType: nil,
+                        jsonValue: nil,
+                        exportFilename: "response"
+                    )
+                    
+                    let visibleState = VisibleResponseState(
+                        summary: respSummary,
+                        body: dummyBody,
+                        selectedMode: .raw,
+                        isStale: false
+                    )
+                    
+                    loadedExecutionStates[request.id] = RequestExecutionState(
+                        lastExecutedRequest: LastExecutedRequest(request: loadedDrafts[request.id]?.snapshot.request ?? request.request),
+                        executionState: .succeeded,
+                        visibleResponseState: visibleState
+                    )
                 }
             }
+            
+            var globalLastID: UUID?
+            var globalLastReq: LastExecutedRequest?
+            var globalExecState: ExecutionState = .idle
+            var globalVisibleState: VisibleResponseState?
+            
+            if let mostRecentSummary = loadedSummaries.values.max(by: { ($0.lastRunAt ?? Date.distantPast) < ($1.lastRunAt ?? Date.distantPast) }),
+               let matchedRequest = savedList.first(where: { $0.id == mostRecentSummary.requestID }) {
+                globalLastID = mostRecentSummary.requestID
+                let targetRequest = loadedDrafts[mostRecentSummary.requestID]?.snapshot.request ?? matchedRequest.request
+                globalLastReq = LastExecutedRequest(request: targetRequest)
+                globalExecState = .succeeded
+                globalVisibleState = loadedExecutionStates[mostRecentSummary.requestID]?.visibleResponseState
+            }
+            
             let hiddenDraft = try await requestLibrary.hiddenDraft.hiddenDraft()
             let selection = try await requestLibrary.selection.selection()
             await MainActor.run {
@@ -650,8 +754,24 @@ final class SessionCoordinator: ObservableObject {
                 }
                 self.savedRequestsByID = Dictionary(uniqueKeysWithValues: savedList.map { ($0.id, $0) })
                 self.draftsByRequestID = loadedDrafts
+                self.summariesByRequestID = loadedSummaries
+                self.executionStatesByRequestID = loadedExecutionStates
                 self.hiddenNewDraft = hiddenDraft
                 self.restoreSelection(selection)
+                
+                if let globalLastID {
+                    self.globalLastExecutedRequestID = globalLastID
+                    self.globalLastExecutedRequest = globalLastReq
+                    self.globalExecutionState = globalExecState
+                    self.globalVisibleResponseState = globalVisibleState
+                } else {
+                    self.globalLastExecutedRequestID = self.selectedSavedRequestID
+                    self.globalLastExecutedRequest = self.state.lastExecutedRequest
+                    self.globalExecutionState = self.state.executionState
+                    self.globalVisibleResponseState = self.state.visibleResponseState
+                }
+                
+                self.globalInlineMessage = self.state.inlineMessage
                 self.refreshRequestListPresentation()
                 self.didCompleteInitialLibraryLoad = true
             }
@@ -980,5 +1100,68 @@ final class SessionCoordinator: ObservableObject {
         state.lastExecutedRequest = cached.lastExecutedRequest
         state.executionState = cached.executionState
         state.visibleResponseState = cached.visibleResponseState
+    }
+
+    // Computed HUD properties mapping to global states
+    var hudStatusTitle: String {
+        switch globalExecutionState {
+        case .idle:
+            return globalLastExecutedRequest == nil ? "Idle" : "Ready"
+        case .running:
+            return "Running"
+        case .succeeded:
+            if let statusCode = globalVisibleResponseState?.summary.statusCode {
+                return "Status \(statusCode)"
+            }
+            return "Succeeded"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    var hudStatusSubtitle: String {
+        switch globalExecutionState {
+        case .idle:
+            return globalLastExecutedRequest == nil ? "No request has run in this session." : "Last executed request is available to rerun."
+        case .running:
+            return "The current request is in flight."
+        case .succeeded:
+            return "Last request completed."
+        case .failed:
+            return globalInlineMessage?.text ?? "Last request failed."
+        }
+    }
+
+    var hudStatusTone: ResponseTone {
+        if globalExecutionState == .running {
+            return .neutral
+        }
+        if globalExecutionState == .failed {
+            return .failure
+        }
+        return globalVisibleResponseState?.summary.tone ?? .neutral
+    }
+
+    var hudStatusIconName: String {
+        switch hudStatusTone {
+        case .neutral:
+            if globalExecutionState == .running {
+                return "arrow.triangle.2.circlepath.circle"
+            }
+            if globalExecutionState == .failed {
+                return "exclamationmark.triangle"
+            }
+            return "bolt.horizontal.circle"
+        case .success:
+            return "checkmark.circle"
+        case .warning:
+            return "exclamationmark.circle"
+        case .failure:
+            return "xmark.circle"
+        }
+    }
+
+    var hudCanRerun: Bool {
+        globalExecutionState != .running && globalLastExecutedRequest != nil
     }
 }
