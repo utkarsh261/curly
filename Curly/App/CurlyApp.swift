@@ -31,7 +31,13 @@ struct CurlyApp: App {
         }
         .commands {
             WorkspaceCommands(coordinator: coordinator)
+            HelpCommands()
         }
+
+        WindowGroup(id: "help") {
+            HelpView()
+        }
+        .windowResizability(.contentSize)
 
         MenuBarExtra {
             MenuBarView()
@@ -158,6 +164,83 @@ private struct UITestEchoRequestExecutor: RequestExecuting {
     }
 }
 #endif
+
+struct HelpView: View {
+    var body: some View {
+        TabView {
+            aboutTab
+                .tabItem { Label("About Curly", systemImage: "curlybraces") }
+
+            supportTab
+                .tabItem { Label("Support", systemImage: "questionmark.circle") }
+        }
+        .frame(width: 520, height: 400)
+    }
+
+    private var aboutTab: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "curlybraces")
+                .font(.system(size: 48))
+                .foregroundStyle(.tint)
+
+            Text("Curly")
+                .font(.title)
+                .fontWeight(.semibold)
+
+            Text("A lightweight cURL runner for macOS")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Paste cURL commands directly into the URL bar", systemImage: "arrow.right.doc.on.clipboard")
+                Label("Execute HTTP requests and inspect responses", systemImage: "play.fill")
+                Label("Save and organize requests in workspaces", systemImage: "folder")
+                Label("Quick access from the menu bar", systemImage: "menubar.rectangle")
+            }
+            .font(.body)
+
+            Text("© Utkarsh Pandey")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.top, 4)
+        }
+        .padding()
+    }
+
+    private var supportTab: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 40))
+                .foregroundStyle(.tint)
+
+            Text("Need help?")
+                .font(.headline)
+
+            Text("Visit the GitHub repository for documentation, feature requests, and bug reports.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+
+            Button("Open GitHub") {
+                NSWorkspace.shared.open(URL(string: "https://github.com/utkarsh261/gurl")!)
+            }
+        }
+        .padding()
+    }
+}
+
+struct HelpCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .help) {
+            Button("Curly Help") {
+                openWindow(id: "help")
+            }
+        }
+    }
+}
 
 struct WorkspaceCommands: Commands {
     @Environment(\.openWindow) private var openWindow
