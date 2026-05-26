@@ -178,4 +178,83 @@ final class RequestLibraryPersistenceTests: XCTestCase {
         XCTAssertNil(draftAfterDelete)
         XCTAssertNil(summaryAfterDelete)
     }
+
+    func testFileStoreMigrationMergesLegacyRequestsAndDropsGeneratedPlaceholder() throws {
+        let placeholder = SavedRequest(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!,
+            name: "New Request",
+            request: Request(method: .get, urlString: "", headers: [], body: .none),
+            createdAt: Date(timeIntervalSince1970: 10),
+            updatedAt: Date(timeIntervalSince1970: 10),
+            lastEditedAt: Date(timeIntervalSince1970: 10),
+            nameWasManuallyEdited: false
+        )
+        let legacyRequest = SavedRequest(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000020")!,
+            name: "Users",
+            request: Request(method: .get, urlString: "https://example.com/users", headers: [], body: .none),
+            createdAt: Date(timeIntervalSince1970: 20),
+            updatedAt: Date(timeIntervalSince1970: 20),
+            lastEditedAt: Date(timeIntervalSince1970: 20),
+            nameWasManuallyEdited: true
+        )
+        let primary = FileRequestLibraryContainer(
+            savedRequests: [placeholder],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil
+        )
+        let legacy = FileRequestLibraryContainer(
+            savedRequests: [legacyRequest],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil
+        )
+
+        let merged = FileRequestLibraryRepositories.mergeForMigration(primary: primary, legacy: legacy)
+
+        XCTAssertEqual(merged.savedRequests, [legacyRequest])
+    }
+
+    func testFileStoreMigrationKeepsNewerSavedRequestOnConflict() throws {
+        let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000030")!
+        let older = SavedRequest(
+            id: requestID,
+            name: "Older",
+            request: Request(method: .get, urlString: "https://old.example.com", headers: [], body: .none),
+            createdAt: Date(timeIntervalSince1970: 30),
+            updatedAt: Date(timeIntervalSince1970: 30),
+            lastEditedAt: Date(timeIntervalSince1970: 30),
+            nameWasManuallyEdited: true
+        )
+        let newer = SavedRequest(
+            id: requestID,
+            name: "Newer",
+            request: Request(method: .post, urlString: "https://new.example.com", headers: [], body: .text("{}")),
+            createdAt: Date(timeIntervalSince1970: 30),
+            updatedAt: Date(timeIntervalSince1970: 40),
+            lastEditedAt: Date(timeIntervalSince1970: 40),
+            nameWasManuallyEdited: true
+        )
+        let primary = FileRequestLibraryContainer(
+            savedRequests: [newer],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil
+        )
+        let legacy = FileRequestLibraryContainer(
+            savedRequests: [older],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil
+        )
+
+        let merged = FileRequestLibraryRepositories.mergeForMigration(primary: primary, legacy: legacy)
+
+        XCTAssertEqual(merged.savedRequests, [newer])
+    }
 }

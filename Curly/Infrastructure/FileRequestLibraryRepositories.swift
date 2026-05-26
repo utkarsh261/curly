@@ -1,6 +1,6 @@
 import Foundation
 
-struct FileRequestLibraryContainer: Codable {
+struct FileRequestLibraryContainer: Codable, Equatable {
     var savedRequests: [SavedRequest]
     var drafts: [RequestDraft]
     var hiddenNewDraft: HiddenNewDraft?
@@ -44,7 +44,83 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
         if !FileManager.default.fileExists(atPath: folder.path) {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         }
-        return folder.appendingPathComponent("request-library.json")
+        let fileURL = folder.appendingPathComponent("request-library.json")
+        try migrateLegacyStoreIfNeeded(to: fileURL)
+        return fileURL
+    }
+
+    static func mergeForMigration(
+        primary: FileRequestLibraryContainer,
+        legacy: FileRequestLibraryContainer
+    ) -> FileRequestLibraryContainer {
+        var merged = primary
+
+        for savedRequest in legacy.savedRequests {
+            if let index = merged.savedRequests.firstIndex(where: { $0.id == savedRequest.id }) {
+                let existing = merged.savedRequests[index]
+                if savedRequest.lastEditedAt > existing.lastEditedAt || savedRequest.updatedAt > existing.updatedAt {
+                    merged.savedRequests[index] = savedRequest
+                }
+            } else {
+                merged.savedRequests.append(savedRequest)
+            }
+        }
+
+        for draft in legacy.drafts {
+            if let index = merged.drafts.firstIndex(where: { $0.requestID == draft.requestID }) {
+                if draft.lastEditedAt > merged.drafts[index].lastEditedAt {
+                    merged.drafts[index] = draft
+                }
+            } else {
+                merged.drafts.append(draft)
+            }
+        }
+
+        if let legacyHiddenDraft = legacy.hiddenNewDraft {
+            if let currentHiddenDraft = merged.hiddenNewDraft {
+                if legacyHiddenDraft.lastEditedAt > currentHiddenDraft.lastEditedAt {
+                    merged.hiddenNewDraft = legacyHiddenDraft
+                }
+            } else {
+                merged.hiddenNewDraft = legacyHiddenDraft
+            }
+        }
+
+        for summary in legacy.summaries {
+            if let index = merged.summaries.firstIndex(where: { $0.requestID == summary.requestID }) {
+                if summary.isNewer(than: merged.summaries[index]) {
+                    merged.summaries[index] = summary
+                }
+            } else {
+                merged.summaries.append(summary)
+            }
+        }
+
+        if let legacySelection = legacy.sessionSelection {
+            if let currentSelection = merged.sessionSelection {
+                if legacySelection.updatedAt > currentSelection.updatedAt {
+                    merged.sessionSelection = legacySelection
+                }
+            } else {
+                merged.sessionSelection = legacySelection
+            }
+        }
+
+        let realSavedRequests = merged.savedRequests.filter { !$0.isGeneratedPlaceholder }
+        if !realSavedRequests.isEmpty {
+            merged.savedRequests = realSavedRequests
+        }
+
+        merged.savedRequests.sort {
+            if $0.lastEditedAt == $1.lastEditedAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.lastEditedAt > $1.lastEditedAt
+        }
+        merged.drafts.sort { $0.requestID.uuidString < $1.requestID.uuidString }
+        merged.summaries.sort { $0.requestID.uuidString < $1.requestID.uuidString }
+
+        return merged
     }
 
     private static func ensureParentDirectoryExists(for fileURL: URL) throws {
@@ -52,6 +128,71 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
         if !FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
+    }
+
+    private static func migrateLegacyStoreIfNeeded(to primaryURL: URL) throws {
+        let legacyURLs = legacyStoreURLs(excluding: primaryURL)
+        guard !legacyURLs.isEmpty else { return }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+
+        var primary = try loadContainerIfPresent(at: primaryURL, decoder: decoder)
+            ?? FileRequestLibraryContainer(savedRequests: [], drafts: [], hiddenNewDraft: nil, summaries: [], sessionSelection: nil)
+        let originalPrimary = primary
+
+        for legacyURL in legacyURLs {
+            guard let legacy = try? loadContainerIfPresent(at: legacyURL, decoder: decoder) else {
+                continue
+            }
+            primary = mergeForMigration(primary: primary, legacy: legacy)
+        }
+
+        guard primary != originalPrimary else { return }
+        try ensureParentDirectoryExists(for: primaryURL)
+        let data = try encoder.encode(primary)
+        try data.write(to: primaryURL, options: .atomic)
+    }
+
+    private static func legacyStoreURLs(excluding primaryURL: URL) -> [URL] {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
+            return []
+        }
+
+        let homeURL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let candidates = [
+            homeURL
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Containers", isDirectory: true)
+                .appendingPathComponent(bundleIdentifier, isDirectory: true)
+                .appendingPathComponent("Data", isDirectory: true)
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+                .appendingPathComponent("Curly", isDirectory: true)
+                .appendingPathComponent("request-library.json"),
+            homeURL
+                .appendingPathComponent("Library", isDirectory: true)
+                .appendingPathComponent("Application Support", isDirectory: true)
+                .appendingPathComponent("Curly", isDirectory: true)
+                .appendingPathComponent("request-library.json")
+        ]
+
+        let primaryPath = primaryURL.standardizedFileURL.path
+        return candidates.filter { $0.standardizedFileURL.path != primaryPath }
+    }
+
+    private static func loadContainerIfPresent(at fileURL: URL, decoder: JSONDecoder) throws -> FileRequestLibraryContainer? {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+
+        let data = try Data(contentsOf: fileURL)
+        guard !data.isEmpty else {
+            return nil
+        }
+        return try decoder.decode(FileRequestLibraryContainer.self, from: data)
     }
 
     private func persist() throws {
@@ -156,5 +297,31 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
 
     func deleteSavedRequestAndRelatedState(id: UUID) async throws {
         try await delete(id: id)
+    }
+}
+
+private extension ExecutionSummary {
+    func isNewer(than other: ExecutionSummary) -> Bool {
+        switch (lastRunAt, other.lastRunAt) {
+        case let (current?, previous?):
+            return current > previous
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        case (.none, .none):
+            return false
+        }
+    }
+}
+
+private extension SavedRequest {
+    var isGeneratedPlaceholder: Bool {
+        name == "New Request"
+            && request.method == .get
+            && request.urlString.isEmpty
+            && request.headers.isEmpty
+            && request.body == .none
+            && !nameWasManuallyEdited
     }
 }

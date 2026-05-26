@@ -29,6 +29,7 @@ struct CurlyApp: App {
                     coordinator.setWindowVisible(false)
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             WorkspaceCommands(coordinator: coordinator)
             HelpCommands()
@@ -76,7 +77,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         }
 
         Task {
-            await coordinator.waitForPendingPersistence()
+            await coordinator.flushSelectionState()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

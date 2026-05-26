@@ -32,7 +32,6 @@ final class SessionCoordinator: ObservableObject {
     private var selectedSavedRequestID: UUID?
     private var draftRunSummaryForHiddenContext: ExecutionSummary?
     private var didCompleteInitialLibraryLoad = false
-    private var hasLocalLibraryMutationsBeforeInitialLoad = false
     private var pendingPersistenceTasks: [UUID: Task<Void, Never>] = [:]
     private var persistenceChain = Task { }
 
@@ -88,6 +87,9 @@ final class SessionCoordinator: ObservableObject {
 
     func setWindowVisible(_ isVisible: Bool) {
         state.isWindowVisible = isVisible
+        if !isVisible {
+            persistSelectionState()
+        }
     }
 
     func requestWindowOpen() {
@@ -95,7 +97,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func setLibraryCollapsed(_ isCollapsed: Bool) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard state.isLibraryCollapsed != isCollapsed else {
             return
         }
@@ -119,8 +120,13 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    func flushSelectionState() async {
+        await waitForPendingPersistence()
+        await persistSelectionStateNow()
+    }
+
     func setMethod(_ method: HTTPMethod) {
-        markLocalMutationDuringInitialLoadIfNeeded()
+        guard state.workspaceRequest.method != method else { return }
         state.workspaceRequest.method = method
         clearInlineMessage()
         markResultStaleIfNeeded()
@@ -128,7 +134,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func setURL(_ url: String) {
-        markLocalMutationDuringInitialLoadIfNeeded()
+        guard state.workspaceRequest.urlString != url else { return }
         state.workspaceRequest.urlString = url
         clearInlineMessage()
         markResultStaleIfNeeded()
@@ -140,15 +146,15 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func setBody(_ text: String) {
-        markLocalMutationDuringInitialLoadIfNeeded()
-        state.workspaceRequest.body = text.isEmpty ? .none : .text(text)
+        let body: RequestBody = text.isEmpty ? .none : .text(text)
+        guard state.workspaceRequest.body != body else { return }
+        state.workspaceRequest.body = body
         clearInlineMessage()
         markResultStaleIfNeeded()
         persistDraftStateAfterEdit()
     }
 
     func addHeader() {
-        markLocalMutationDuringInitialLoadIfNeeded()
         state.workspaceRequest.headers.append(Header())
         clearInlineMessage()
         markResultStaleIfNeeded()
@@ -156,7 +162,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func updateHeader(id: UUID, name: String? = nil, value: String? = nil, isEnabled: Bool? = nil) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let index = state.workspaceRequest.headers.firstIndex(where: { $0.id == id }) else {
             return
         }
@@ -177,7 +182,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func removeHeader(id: UUID) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         state.workspaceRequest.headers.removeAll { $0.id == id }
         clearInlineMessage()
         markResultStaleIfNeeded()
@@ -256,13 +260,12 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func updateWorkspaceName(_ name: String) {
-        markLocalMutationDuringInitialLoadIfNeeded()
+        guard state.workspaceName != name else { return }
         state.workspaceName = name
         persistDraftStateAfterEdit()
     }
 
     func createOrFocusHiddenNewDraft() {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let requestLibrary else {
             newWorkspace()
             return
@@ -296,7 +299,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func selectSavedRequest(id: UUID) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard requestLibrary != nil else {
             return
         }
@@ -315,7 +317,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func saveCurrentRequest() {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let requestLibrary else { return }
         let now = Date()
         let snapshot = EditableRequestSnapshot(name: normalizedWorkspaceName(), request: state.workspaceRequest)
@@ -372,7 +373,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func revertCurrentRequestDraft() {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard selectedContext == .saved, let selectedSavedRequestID else { return }
         revertSavedRequestDraft(id: selectedSavedRequestID)
     }
@@ -383,7 +383,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func deleteSavedRequest(id: UUID) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let requestLibrary else { return }
         savedRequestsByID[id] = nil
         draftsByRequestID[id] = nil
@@ -407,19 +406,16 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func duplicateSelectedRequest() {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard selectedContext == .saved, let sourceID = selectedSavedRequestID, let source = effectiveSnapshotForSavedRequest(id: sourceID) else { return }
         duplicateSavedRequest(snapshot: source)
     }
 
     func duplicateSavedRequest(id: UUID) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let source = effectiveSnapshotForSavedRequest(id: id) else { return }
         duplicateSavedRequest(snapshot: source)
     }
 
     func revertSavedRequestDraft(id: UUID) {
-        markLocalMutationDuringInitialLoadIfNeeded()
         guard let requestLibrary else { return }
         guard let saved = savedRequestsByID[id] else { return }
         draftsByRequestID[id] = nil
@@ -747,11 +743,6 @@ final class SessionCoordinator: ObservableObject {
                 if self.didCompleteInitialLibraryLoad {
                     return
                 }
-                if self.hasLocalLibraryMutationsBeforeInitialLoad {
-                    self.didCompleteInitialLibraryLoad = true
-                    self.refreshRequestListPresentation()
-                    return
-                }
                 self.savedRequestsByID = Dictionary(uniqueKeysWithValues: savedList.map { ($0.id, $0) })
                 self.draftsByRequestID = loadedDrafts
                 self.summariesByRequestID = loadedSummaries
@@ -786,13 +777,6 @@ final class SessionCoordinator: ObservableObject {
                 refreshRequestListPresentation()
             }
         }
-    }
-
-    private func markLocalMutationDuringInitialLoadIfNeeded() {
-        guard requestLibrary != nil, !didCompleteInitialLibraryLoad else {
-            return
-        }
-        hasLocalLibraryMutationsBeforeInitialLoad = true
     }
 
     private func restoreSelection(_ persisted: SessionSelection?) {
@@ -873,7 +857,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func persistSelectionState() {
-        guard let requestLibrary else { return }
+        guard didCompleteInitialLibraryLoad, let requestLibrary else { return }
         let selection = SessionSelection(
             selectedSavedRequestID: selectedSavedRequestID,
             selectedContext: selectedContext,
@@ -882,6 +866,21 @@ final class SessionCoordinator: ObservableObject {
         )
         enqueuePersistenceTask(errorPrefix: "Failed to persist selection") {
             try await requestLibrary.selection.saveSelection(selection)
+        }
+    }
+
+    private func persistSelectionStateNow() async {
+        guard didCompleteInitialLibraryLoad, let requestLibrary else { return }
+        let selection = SessionSelection(
+            selectedSavedRequestID: selectedSavedRequestID,
+            selectedContext: selectedContext,
+            isLibraryCollapsed: state.isLibraryCollapsed,
+            updatedAt: Date()
+        )
+        do {
+            try await requestLibrary.selection.saveSelection(selection)
+        } catch {
+            setInlineError("Failed to persist selection: \(error.localizedDescription)")
         }
     }
 

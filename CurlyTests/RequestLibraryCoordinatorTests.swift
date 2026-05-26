@@ -169,6 +169,84 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertTrue(relaunchedCoordinator.state.isCurrentRequestDirty)
     }
 
+    func testFileBackedPersistenceRestoresLastSelectedRequestAcrossRelaunch() async throws {
+        let fileURL = makeTemporaryLibraryFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let firstID: UUID
+        let secondID: UUID
+        do {
+            let coordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+            await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+            coordinator.updateWorkspaceName("First")
+            coordinator.setURL("https://api.example.com/first")
+            coordinator.saveCurrentRequest()
+            await waitUntil { coordinator.state.requestListItems.count == 1 }
+            firstID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+
+            coordinator.createOrFocusHiddenNewDraft()
+            coordinator.updateWorkspaceName("Second")
+            coordinator.setURL("https://api.example.com/second")
+            coordinator.saveCurrentRequest()
+            await waitUntil { coordinator.state.requestListItems.count == 2 }
+            secondID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+
+            coordinator.selectSavedRequest(id: firstID)
+            await coordinator.flushSelectionState()
+        }
+
+        let relaunchedCoordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+        await waitUntil { relaunchedCoordinator.state.requestListItems.count == 2 }
+
+        XCTAssertNotEqual(firstID, secondID)
+        XCTAssertEqual(relaunchedCoordinator.state.selectedSavedRequestID, firstID)
+        XCTAssertEqual(relaunchedCoordinator.state.workspaceName, "First")
+        XCTAssertEqual(relaunchedCoordinator.state.workspaceRequest.urlString, "https://api.example.com/first")
+    }
+
+    func testInitialNoOpBindingWriteDoesNotBlockSelectionRestore() async throws {
+        let timestamp = Date(timeIntervalSince1970: 1_700_001_000)
+        let persisted = SavedRequest(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000001000")!,
+            name: "Persisted",
+            request: Request(method: .get, urlString: "https://api.example.com/persisted", headers: [], body: .none),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            lastEditedAt: timestamp,
+            nameWasManuallyEdited: true
+        )
+        let saved = DelayedSavedRequestRepository(savedRequests: [persisted])
+        let drafts = InMemoryRequestDraftRepository()
+        let hidden = InMemoryHiddenNewDraftRepository()
+        let summaries = InMemoryExecutionSummaryRepository()
+        let selection = InMemorySessionSelectionRepository()
+        try await selection.saveSelection(
+            SessionSelection(
+                selectedSavedRequestID: persisted.id,
+                selectedContext: .saved,
+                updatedAt: timestamp
+            )
+        )
+        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries)
+        let dependencies = RequestLibraryDependencies(
+            savedRequests: saved,
+            drafts: drafts,
+            hiddenDraft: hidden,
+            summaries: summaries,
+            selection: selection,
+            workspaceFacade: facade
+        )
+
+        let coordinator = SessionCoordinator(requestLibrary: dependencies)
+        coordinator.updateWorkspaceName("Untitled Request")
+        await saved.release()
+        await waitUntil { coordinator.state.selectedSavedRequestID == persisted.id }
+
+        XCTAssertEqual(coordinator.state.workspaceName, "Persisted")
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/persisted")
+    }
+
     func testSelectSavedRequestUpdatesSelectedSavedRequestIDInPublishedState() async {
         let coordinator = makeCoordinator()
         await waitUntil { coordinator.state.selectedRequestContext == .saved }
@@ -247,4 +325,37 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         }
         XCTAssertTrue(condition(), "Condition timed out after \(timeout) seconds.")
     }
+}
+
+private actor DelayedSavedRequestRepository: SavedRequestRepository {
+    private let savedRequests: [SavedRequest]
+    private var shouldDelayList = true
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(savedRequests: [SavedRequest]) {
+        self.savedRequests = savedRequests
+    }
+
+    func release() {
+        shouldDelayList = false
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func list() async throws -> [SavedRequest] {
+        if shouldDelayList {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        }
+        return savedRequests
+    }
+
+    func get(id: UUID) async throws -> SavedRequest? {
+        savedRequests.first { $0.id == id }
+    }
+
+    func upsert(_ request: SavedRequest) async throws {}
+
+    func delete(id: UUID) async throws {}
 }
