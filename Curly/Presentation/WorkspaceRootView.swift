@@ -4,8 +4,6 @@ import SwiftUI
 private enum WorkspaceLayout {
     static let sidebarWidth: CGFloat = 220
     static let sidebarRevealHitWidth: CGFloat = 12
-    static let titlebarControlClearance: CGFloat = 84
-    static let sidebarTitlebarClearance: CGFloat = 42
     static let panePadding: CGFloat = 20
     static let paneTopPadding: CGFloat = 16
 }
@@ -234,7 +232,6 @@ struct WorkspaceRootView: View {
                 )
             }
         }
-        .padding(.leading, WorkspaceLayout.titlebarControlClearance)
         .onChange(of: isRequestNameFocused) { wasFocused, isFocused in
             if wasFocused && !isFocused {
                 saveRequestNameEditIfNeeded()
@@ -298,7 +295,7 @@ struct WorkspaceRootView: View {
             }
         }
         .padding(10)
-        .padding(.top, WorkspaceLayout.sidebarTitlebarClearance)
+        .padding(.top, WorkspaceLayout.paneTopPadding)
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 
