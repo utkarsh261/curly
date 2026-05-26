@@ -1,8 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct WorkspaceRootView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
     @FocusState private var isURLFieldFocused: Bool
+    @FocusState private var isRequestNameFocused: Bool
     @State private var pendingURLInput = ""
     @State private var responseFoldedRanges: [NSRange] = []
     @State private var pendingDeleteRequest: RequestListItem?
@@ -166,13 +168,26 @@ struct WorkspaceRootView: View {
 
     private var requestHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                TextField("Request Name", text: workspaceNameBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityIdentifier("request-name-field")
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    TextField("Untitled request", text: workspaceNameBinding)
+                        .textFieldStyle(.plain)
+                        .font(.title3.weight(.semibold))
+                        .focused($isRequestNameFocused)
+                        .onSubmit {
+                            saveRequestNameEditIfNeeded()
+                        }
+                        .accessibilityIdentifier("request-name-field")
+
+                    Rectangle()
+                        .fill(isRequestNameFocused ? Color.accent.opacity(0.55) : Color.borderSubtle.opacity(0.0))
+                        .frame(height: 1)
+                        .animation(.easeInOut(duration: 0.15), value: isRequestNameFocused)
+                }
+                .padding(.horizontal, 2)
 
                 Button {
-                    coordinator.saveCurrentRequest()
+                    saveRequestNameEditIfNeeded()
                 } label: {
                     Image(systemName: "square.and.arrow.down")
                 }
@@ -211,6 +226,19 @@ struct WorkspaceRootView: View {
                 )
             }
         }
+        .onChange(of: isRequestNameFocused) { wasFocused, isFocused in
+            if wasFocused && !isFocused {
+                saveRequestNameEditIfNeeded()
+            }
+        }
+    }
+
+    private func saveRequestNameEditIfNeeded() {
+        guard coordinator.state.canSaveCurrentRequest else {
+            return
+        }
+        coordinator.saveCurrentRequest()
+        isRequestNameFocused = false
     }
 
     private var libraryPane: some View {
