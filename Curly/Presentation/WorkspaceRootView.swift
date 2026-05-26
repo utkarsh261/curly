@@ -24,7 +24,7 @@ struct WorkspaceRootView: View {
                 .frame(minWidth: 420, idealWidth: 680)
         }
         .frame(minWidth: 980, minHeight: 620)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(WorkspaceBackdrop())
         .confirmationDialog(
             "Replace the current workspace?",
             isPresented: replacementDialogIsPresented,
@@ -161,7 +161,7 @@ struct WorkspaceRootView: View {
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
         }
-        .background(Color.surfaceGrouped)
+        .background(WorkspaceBackdrop())
     }
 
     private var requestHeader: some View {
@@ -375,19 +375,14 @@ struct WorkspaceRootView: View {
 
     private var responsePane: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Label("Response", systemImage: "arrow.left.arrow.right")
-                        .font(.title3.weight(.semibold))
-                    Text("Inspect the last response in a formatted JSON or raw body view.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.textMuted)
-                }
-                Spacer()
-            }
+            paneTitle(
+                title: "Response",
+                icon: "arrow.left.arrow.right",
+                subtitle: "Inspect the last response in a formatted JSON or raw body view."
+            )
 
-            GroupBox {
-                HStack(alignment: .top, spacing: 12) {
+            PanelCard(padding: 12, cornerRadius: 16) {
+                HStack(alignment: .center, spacing: 10) {
                     StatusMetric(
                         title: "Status",
                         value: coordinator.state.responseSummaryStatusValue,
@@ -399,10 +394,9 @@ struct WorkspaceRootView: View {
                     Spacer()
                     StaleBadge(isVisible: coordinator.state.responseIsStale)
                 }
-                .padding(14)
             }
 
-            GroupBox {
+            PanelCard(padding: 18, cornerRadius: 16) {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
                         Picker("", selection: responseModeBinding) {
@@ -455,12 +449,11 @@ struct WorkspaceRootView: View {
                     responseContent(foldedRanges: $responseFoldedRanges)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(18)
             }
             .frame(maxHeight: .infinity)
         }
         .padding(20)
-        .background(Color.surfaceGrouped)
+        .background(WorkspaceBackdrop())
     }
 
     private var bodyBinding: Binding<String> {
@@ -515,9 +508,14 @@ struct WorkspaceRootView: View {
             }
         } else {
             VStack(spacing: 18) {
-                Image(systemName: coordinator.state.statusIconName)
-                    .font(.system(size: 48, weight: .light))
-                    .foregroundStyle(Color.textMuted)
+                ZStack {
+                    Circle()
+                        .fill(Color.accent.opacity(0.08))
+                        .frame(width: 72, height: 72)
+                    Image(systemName: coordinator.state.statusIconName)
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundStyle(Color.accent.opacity(0.75))
+                }
 
                 VStack(spacing: 6) {
                     Text(coordinator.state.responsePlaceholderTitle)
@@ -536,12 +534,23 @@ struct WorkspaceRootView: View {
     }
 
     private func paneTitle(title: String, icon: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Label(title, systemImage: icon)
-                .font(.title3.weight(.semibold))
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(Color.textMuted)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.accent)
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.accentSoft)
+                )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textMuted)
+            }
         }
     }
 
@@ -570,6 +579,65 @@ struct WorkspaceRootView: View {
             header.name.trimmingCharacters(in: .whitespacesAndNewlines).localizedCaseInsensitiveCompare("Content-Type") == .orderedSame &&
             header.value.localizedCaseInsensitiveContains("json")
         }
+    }
+}
+
+private struct WorkspaceBackdrop: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            Color.surfaceGrouped
+            LinearGradient(
+                colors: [
+                    Color.surfaceRaised.opacity(colorScheme == .dark ? 0.05 : 0.55),
+                    Color.accent.opacity(colorScheme == .dark ? 0.05 : 0.035),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        }
+    }
+}
+
+private struct PanelCard<Content: View>: View {
+    let padding: CGFloat
+    let cornerRadius: CGFloat
+    let showsShadow: Bool
+    let content: Content
+
+    init(
+        padding: CGFloat = 16,
+        cornerRadius: CGFloat = 14,
+        showsShadow: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.padding = padding
+        self.cornerRadius = cornerRadius
+        self.showsShadow = showsShadow
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .padding(padding)
+            .background(PanelCardBackground(cornerRadius: cornerRadius, showsShadow: showsShadow))
+    }
+}
+
+private struct PanelCardBackground: View {
+    let cornerRadius: CGFloat
+    let showsShadow: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.surfaceRaised)
+            .shadow(color: .black.opacity(showsShadow ? 0.06 : 0), radius: 14, y: 5)
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.borderSubtle.opacity(0.82), lineWidth: 1)
+            )
     }
 }
 
@@ -621,16 +689,30 @@ private struct RequestComposerView: View {
                 .disabled(!canRun)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 12)
             .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.surfaceRaised)
-                    .shadow(color: .black.opacity(0.06), radius: 6, y: 2)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(Color.surfaceRaised)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.accent.opacity(isURLFieldFocused.wrappedValue ? 0.12 : 0.045),
+                                    Color.clear
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+                .shadow(color: .black.opacity(isURLFieldFocused.wrappedValue ? 0.10 : 0.06), radius: isURLFieldFocused.wrappedValue ? 16 : 10, y: 4)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(borderColor, lineWidth: isURLFieldFocused.wrappedValue ? 1.5 : 1)
             }
+            .animation(.easeInOut(duration: 0.16), value: isURLFieldFocused.wrappedValue)
 
             Text("Paste cURL directly. The request below updates automatically.")
                 .font(.caption)
@@ -695,7 +777,11 @@ private struct HeaderRowView: View {
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.surfaceGrouped)
+                .fill(Color.surfaceInset)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.borderSubtle.opacity(0.65), lineWidth: 1)
+                )
         )
     }
 }
@@ -711,7 +797,7 @@ private struct RequestEditorAccordion: View {
     @State private var foldedRanges: [NSRange] = []
 
     var body: some View {
-        GroupBox {
+        PanelCard(padding: 14, cornerRadius: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 accordionRow(
                     title: "Headers",
@@ -741,8 +827,8 @@ private struct RequestEditorAccordion: View {
                     bodyContent
                 }
             }
-            .padding(12)
         }
+        .animation(.easeInOut(duration: 0.16), value: expansion)
     }
 
     private var headerCountSummary: String {
@@ -818,7 +904,7 @@ private struct RequestEditorAccordion: View {
     }
 
     private var bodyContent: some View {
-        GroupBox {
+        PanelCard(padding: 14, cornerRadius: 12, showsShadow: false) {
             VStack(alignment: .leading, spacing: 10) {
                 if isJSONBody {
                     JSONEditorPanel(
@@ -843,7 +929,6 @@ private struct RequestEditorAccordion: View {
                 }
             }
             .frame(maxHeight: .infinity)
-            .padding(14)
         }
     }
 }
@@ -872,6 +957,10 @@ private struct InlineMessageCard: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(accent.opacity(0.12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(accent.opacity(0.18), lineWidth: 1)
+                )
         )
     }
 
@@ -902,7 +991,11 @@ private struct EmptySectionHint: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.surfaceGrouped)
+                .fill(Color.surfaceInset)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.borderSubtle.opacity(0.65), lineWidth: 1)
+                )
         )
     }
 }
@@ -913,20 +1006,33 @@ private struct SummaryMetric: View {
     let icon: String
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundStyle(Color.textMuted)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(Color.textMuted)
+                    .frame(width: 14)
                 Text(title)
                     .font(.caption2)
                     .foregroundStyle(Color.textMuted)
-                Text(value)
-                    .font(.headline.monospacedDigit())
             }
+
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
         }
-        .frame(minWidth: 86, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 104, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(Color.borderSubtle.opacity(0.16))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(Color.borderSubtle.opacity(0.42), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -936,21 +1042,34 @@ private struct StatusMetric: View {
     let tone: ResponseTone
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 4) {
-            Image(systemName: "circle.fill")
-                .font(.system(size: 7))
-                .foregroundStyle(toneColor)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 7))
+                    .foregroundStyle(toneColor)
+                    .frame(width: 14)
                 Text(title)
                     .font(.caption2)
                     .foregroundStyle(Color.textMuted)
-                Text(value)
-                    .font(.headline.monospacedDigit())
-                    .foregroundStyle(toneColor)
             }
+
+            Text(value)
+                .font(.headline.monospacedDigit().weight(.semibold))
+                .foregroundStyle(toneColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
         }
-        .frame(minWidth: 100, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(minWidth: 104, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .fill(toneColor.opacity(tone == .neutral ? 0.08 : 0.14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(toneColor.opacity(tone == .neutral ? 0.14 : 0.28), lineWidth: 1)
+                )
+        )
     }
 
     private var toneColor: Color {

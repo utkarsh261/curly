@@ -15,6 +15,13 @@ let surfaceGroupedNS = NSColor(name: "surfaceGrouped") { appearance in
         : NSColor(red: 0.949, green: 0.949, blue: 0.953, alpha: 1) // #F2F2F4
 }
 
+let surfaceInsetNS = NSColor(name: "surfaceInset") { appearance in
+    let isDark = appearance.name == .darkAqua || appearance.name == .vibrantDark
+    return isDark
+        ? NSColor(red: 0.086, green: 0.086, blue: 0.094, alpha: 1) // #161618
+        : NSColor(red: 0.973, green: 0.973, blue: 0.976, alpha: 1) // #F8F8F9
+}
+
 private enum SurfaceRaisedValues {
     static let light = NSColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1)       // #FFFFFF
     static let dark = NSColor(red: 0.165, green: 0.165, blue: 0.173, alpha: 1)  // #2A2A2C
@@ -43,7 +50,12 @@ let textMutedNS = NSColor(name: "textMuted") { _ in
 extension Color {
     static let accent = Color(nsColor: themeAccentNS)
     static let surfaceGrouped = Color(nsColor: surfaceGroupedNS)
+    static let surfaceInset = Color(nsColor: surfaceInsetNS)
     static let surfaceRaised = Color(nsColor: surfaceRaisedNS)
     static let borderSubtle = Color(nsColor: borderSubtleNS)
     static let textMuted = Color(nsColor: textMutedNS)
+
+    static var accentSoft: Color {
+        accent.opacity(0.12)
+    }
 }
