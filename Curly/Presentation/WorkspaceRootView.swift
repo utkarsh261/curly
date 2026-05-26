@@ -7,6 +7,7 @@ private enum WorkspaceLayout {
     static let titlebarControlClearance: CGFloat = 84
     static let sidebarTitlebarClearance: CGFloat = 42
     static let panePadding: CGFloat = 20
+    static let paneTopPadding: CGFloat = 16
 }
 
 struct WorkspaceRootView: View {
@@ -32,7 +33,6 @@ struct WorkspaceRootView: View {
         }
         .frame(minWidth: 980, minHeight: 620)
         .background(WorkspaceBackdrop())
-        .ignoresSafeArea(.container, edges: .top)
         .confirmationDialog(
             "Replace the current workspace?",
             isPresented: replacementDialogIsPresented,
@@ -166,7 +166,7 @@ struct WorkspaceRootView: View {
                     .environmentObject(coordinator)
                 }
                 .padding(.horizontal, WorkspaceLayout.panePadding)
-                .padding(.top, -8)
+                .padding(.top, WorkspaceLayout.paneTopPadding)
                 .padding(.bottom, WorkspaceLayout.panePadding)
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
@@ -483,7 +483,7 @@ struct WorkspaceRootView: View {
             .frame(maxHeight: .infinity)
         }
         .padding(.horizontal, 20)
-        .padding(.top, -8)
+        .padding(.top, WorkspaceLayout.paneTopPadding)
         .padding(.bottom, 20)
         .background(WorkspaceBackdrop())
     }
