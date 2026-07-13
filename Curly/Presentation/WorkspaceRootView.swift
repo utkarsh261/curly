@@ -925,14 +925,7 @@ private struct VariableTokenChip: View {
     }
 
     private var tint: Color {
-        switch token.status {
-        case .resolved:
-            return Color.accent
-        case .missing:
-            return .orange
-        case .invalid:
-            return .red
-        }
+        VariableTokenPalette.color(for: token.status)
     }
 
     private var helpText: String {

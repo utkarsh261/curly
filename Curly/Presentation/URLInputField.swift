@@ -1,6 +1,21 @@
 import AppKit
 import SwiftUI
 
+enum VariableTokenPalette {
+    static func nsColor(for status: VariableTokenStatus) -> NSColor {
+        switch status {
+        case .resolved:
+            return .controlAccentColor
+        case .missing, .invalid:
+            return .systemRed
+        }
+    }
+
+    static func color(for status: VariableTokenStatus) -> Color {
+        Color(nsColor: nsColor(for: status))
+    }
+}
+
 struct URLInputField: NSViewRepresentable {
     @Binding var text: String
     let variables: [Variable]
@@ -629,18 +644,9 @@ final class PasteAwareTextField: NSTextField {
     fileprivate static let baseFont = NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
 
     fileprivate static func tokenAttributes(for status: VariableTokenStatus) -> [NSAttributedString.Key: Any] {
-        let color: NSColor
-        switch status {
-        case .resolved:
-            color = .controlAccentColor
-        case .missing:
-            color = .systemOrange
-        case .invalid:
-            color = .systemRed
-        }
         return [
             .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
-            .foregroundColor: color
+            .foregroundColor: VariableTokenPalette.nsColor(for: status)
         ]
     }
 }

@@ -1,7 +1,14 @@
+import AppKit
 import XCTest
 @testable import Curly
 
 final class RequestValidationTests: XCTestCase {
+    func testMissingAndInvalidVariableTokensUseErrorColor() {
+        XCTAssertEqual(VariableTokenPalette.nsColor(for: .missing), .systemRed)
+        XCTAssertEqual(VariableTokenPalette.nsColor(for: .invalid), .systemRed)
+        XCTAssertEqual(VariableTokenPalette.nsColor(for: .resolved), .controlAccentColor)
+    }
+
     func testRequiresHTTPOrHTTPSAbsoluteURL() {
         XCTAssertFalse(Request(method: .get, urlString: "foo", headers: [], body: .none).isMinimallyValid)
         XCTAssertFalse(Request(method: .get, urlString: "localhost:3000", headers: [], body: .none).isMinimallyValid)
