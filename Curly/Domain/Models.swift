@@ -90,6 +90,12 @@ struct Request: Equatable, Codable {
     var isMinimallyValid: Bool {
         lightweightValidationMessage == nil && !urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    var containsVariableTemplateOpening: Bool {
+        urlString.contains("{{") || headers.contains { header in
+            header.isEnabled && (header.name.contains("{{") || header.value.contains("{{"))
+        }
+    }
 }
 
 enum VariableScope: String, Equatable, Codable, CaseIterable, Identifiable {
@@ -134,12 +140,54 @@ struct Variable: Identifiable, Equatable, Codable {
         guard let first = name.unicodeScalars.first else {
             return false
         }
-        guard CharacterSet.letters.contains(first) || first == "_" else {
+        guard isASCIILetter(first) || first == "_" else {
             return false
         }
         return name.unicodeScalars.dropFirst().allSatisfy { scalar in
-            CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-"
+            isASCIILetter(scalar) || isASCIIDigit(scalar) || scalar == "_" || scalar == "-"
         }
+    }
+
+    private static func isASCIILetter(_ scalar: Unicode.Scalar) -> Bool {
+        (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
+    }
+
+    private static func isASCIIDigit(_ scalar: Unicode.Scalar) -> Bool {
+        (48...57).contains(scalar.value)
+    }
+}
+
+struct VariableLookup: Equatable {
+    let variablesByName: [String: Variable]
+    let duplicateNames: [String]
+
+    init(variables: [Variable]) {
+        var variablesByName: [String: Variable] = [:]
+        var countsByName: [String: Int] = [:]
+
+        for variable in variables {
+            countsByName[variable.name, default: 0] += 1
+            guard let existing = variablesByName[variable.name] else {
+                variablesByName[variable.name] = variable
+                continue
+            }
+            if Self.prefers(variable, over: existing) {
+                variablesByName[variable.name] = variable
+            }
+        }
+
+        self.variablesByName = variablesByName
+        self.duplicateNames = countsByName.compactMap { name, count in
+            count > 1 ? name : nil
+        }
+        .sorted()
+    }
+
+    private static func prefers(_ candidate: Variable, over existing: Variable) -> Bool {
+        if candidate.updatedAt != existing.updatedAt {
+            return candidate.updatedAt > existing.updatedAt
+        }
+        return candidate.id.uuidString > existing.id.uuidString
     }
 }
 
@@ -187,15 +235,24 @@ struct VariableResolutionResult: Equatable {
 }
 
 enum VariableTemplateParser {
+    enum Mode {
+        case editing
+        case execution
+    }
+
     static func parse(_ text: String) -> [VariableTemplateSegment] {
         parse(text, variablesByName: [:])
     }
 
     static func parse(_ text: String, variables: [Variable]) -> [VariableTemplateSegment] {
-        parse(text, variablesByName: Dictionary(uniqueKeysWithValues: variables.map { ($0.name, $0) }))
+        parse(text, variablesByName: VariableLookup(variables: variables).variablesByName)
     }
 
-    static func parse(_ text: String, variablesByName: [String: Variable]) -> [VariableTemplateSegment] {
+    static func parse(
+        _ text: String,
+        variablesByName: [String: Variable],
+        mode: Mode = .editing
+    ) -> [VariableTemplateSegment] {
         let source = text as NSString
         var segments: [VariableTemplateSegment] = []
         var cursor = 0
@@ -220,7 +277,7 @@ enum VariableTemplateParser {
 
             guard closeRange.location != NSNotFound else {
                 let remainderRange = NSRange(location: openRange.location, length: source.length - openRange.location)
-                appendTextIfNeeded(source.substring(with: remainderRange), range: remainderRange, to: &segments)
+                appendIncompleteSegment(source, range: remainderRange, mode: mode, to: &segments)
                 break
             }
 
@@ -231,7 +288,7 @@ enum VariableTemplateParser {
                     location: openRange.location,
                     length: nestedOpenRange.location - openRange.location
                 )
-                appendTextIfNeeded(source.substring(with: incompleteRange), range: incompleteRange, to: &segments)
+                appendIncompleteSegment(source, range: incompleteRange, mode: mode, to: &segments)
                 cursor = nestedOpenRange.location
                 continue
             }
@@ -280,12 +337,39 @@ enum VariableTemplateParser {
         guard !text.isEmpty else { return }
         segments.append(.text(text, range))
     }
+
+    private static func appendIncompleteSegment(
+        _ source: NSString,
+        range: NSRange,
+        mode: Mode,
+        to segments: inout [VariableTemplateSegment]
+    ) {
+        let rawText = source.substring(with: range)
+        let attemptedName = String(rawText.dropFirst(2))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard mode == .execution, !attemptedName.isEmpty else {
+            appendTextIfNeeded(rawText, range: range, to: &segments)
+            return
+        }
+        segments.append(.token(VariableToken(
+            rawText: rawText,
+            name: nil,
+            range: range,
+            status: .invalid,
+            resolvedValue: nil,
+            scope: nil
+        )))
+    }
 }
 
 enum VariableResolver {
     static func resolve(_ request: Request, variables: [Variable]) -> VariableResolutionResult {
-        let variablesByName = newestVariablesByName(variables)
-        let urlSegments = VariableTemplateParser.parse(request.urlString, variablesByName: variablesByName)
+        let variablesByName = VariableLookup(variables: variables).variablesByName
+        let urlSegments = VariableTemplateParser.parse(
+            request.urlString,
+            variablesByName: variablesByName,
+            mode: .execution
+        )
         let urlTokens = tokens(from: urlSegments)
         var missingNames = missingNames(from: urlTokens)
         var invalidTokens = invalidTokens(from: urlTokens)
@@ -294,7 +378,11 @@ enum VariableResolver {
         var headerValueTokensByHeaderID: [UUID: [VariableToken]] = [:]
 
         for header in request.headers {
-            let valueSegments = VariableTemplateParser.parse(header.value, variablesByName: variablesByName)
+            let valueSegments = VariableTemplateParser.parse(
+                header.value,
+                variablesByName: variablesByName,
+                mode: header.isEnabled ? .execution : .editing
+            )
             let valueTokens = tokens(from: valueSegments)
             headerValueTokensByHeaderID[header.id] = valueTokens
 
@@ -303,9 +391,12 @@ enum VariableResolver {
                 missingNames.append(contentsOf: self.missingNames(from: valueTokens))
                 invalidTokens.append(contentsOf: self.invalidTokens(from: valueTokens))
 
-                let nameSegments = VariableTemplateParser.parse(header.name, variablesByName: variablesByName)
-                let nameInvalidTokens = self.invalidTokens(from: tokens(from: nameSegments))
-                invalidTokens.append(contentsOf: nameInvalidTokens)
+                let nameSegments = VariableTemplateParser.parse(
+                    header.name,
+                    variablesByName: variablesByName,
+                    mode: .execution
+                )
+                invalidTokens.append(contentsOf: tokens(from: nameSegments).map(\.rawText))
                 resolvedHeader.value = render(valueSegments)
             }
             resolvedHeaders.append(resolvedHeader)
@@ -362,15 +453,6 @@ enum VariableResolver {
             invalidTokens: [],
             errorMessage: nil
         )
-    }
-
-    private static func newestVariablesByName(_ variables: [Variable]) -> [String: Variable] {
-        variables.reduce(into: [:]) { result, variable in
-            if let existing = result[variable.name], existing.updatedAt > variable.updatedAt {
-                return
-            }
-            result[variable.name] = variable
-        }
     }
 
     private static func tokens(from segments: [VariableTemplateSegment]) -> [VariableToken] {

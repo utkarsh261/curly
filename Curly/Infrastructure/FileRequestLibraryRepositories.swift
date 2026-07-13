@@ -128,7 +128,7 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
                 if variable.updatedAt > merged.variables[index].updatedAt {
                     merged.variables[index] = variable
                 }
-            } else if !merged.variables.contains(where: { $0.name == variable.name }) {
+            } else {
                 merged.variables.append(variable)
             }
         }

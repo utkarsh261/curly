@@ -39,6 +39,33 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertFalse(Variable.isValidName(" user_id "))
         XCTAssertFalse(Variable.isValidName("user id"))
         XCTAssertFalse(Variable.isValidName("123_id"))
+        XCTAssertFalse(Variable.isValidName("tøken"))
+        XCTAssertFalse(Variable.isValidName("变量"))
+    }
+
+    func testVariableParserUsesNewestDuplicateWithoutCrashing() {
+        let older = Variable(
+            name: "host",
+            value: "old.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = Variable(
+            name: "host",
+            value: "new.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 2),
+            updatedAt: Date(timeIntervalSince1970: 2)
+        )
+
+        let tokens = VariableTemplateParser.parse("https://{{host}}", variables: [older, newer]).compactMap { segment -> VariableToken? in
+            guard case .token(let token) = segment else { return nil }
+            return token
+        }
+
+        XCTAssertEqual(tokens.first?.resolvedValue, "new.example.com")
+        XCTAssertEqual(VariableLookup(variables: [older, newer]).duplicateNames, ["host"])
     }
 
     func testVariableParserFindsResolvedMissingAndInvalidTokens() {
@@ -198,6 +225,45 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(result.invalidTokens, ["{{ base_url }}"])
         XCTAssertEqual(result.missingNames, [])
         XCTAssertEqual(result.errorMessage, "Fix invalid variable syntax. Use {{name}} with no spaces. Invalid: {{ base_url }}")
+    }
+
+    func testVariableResolverRejectsTemplatesInEnabledHeaderNames() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "X-{{tenant}}", value: "value", isEnabled: true)],
+            body: .none
+        )
+        let variable = Variable(name: "tenant", value: "acme", scope: .global)
+
+        let result = VariableResolver.resolve(request, variables: [variable])
+
+        XCTAssertNil(result.resolvedRequest)
+        XCTAssertEqual(result.invalidTokens, ["{{tenant}}"])
+    }
+
+    func testVariableResolverRejectsUnterminatedEnabledHeaderValue() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "Authorization", value: "Bearer {{token", isEnabled: true)],
+            body: .none
+        )
+
+        let result = VariableResolver.resolve(request, variables: [])
+
+        XCTAssertNil(result.resolvedRequest)
+        XCTAssertEqual(result.invalidTokens, ["{{token"])
+    }
+
+    func testVariableResolverIgnoresTemplatesInDisabledHeaders() {
+        let disabled = Header(name: "X-{{tenant}}", value: "Bearer {{token", isEnabled: false)
+        let request = Request(method: .get, urlString: "https://example.com", headers: [disabled], body: .none)
+
+        let result = VariableResolver.resolve(request, variables: [])
+
+        XCTAssertEqual(result.resolvedRequest?.headers, [disabled])
+        XCTAssertNil(result.errorMessage)
     }
 
     func testVariableResolverDoesNotResolveRecursively() {

@@ -12,7 +12,6 @@ struct WorkspaceRootView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
     @FocusState private var isURLFieldFocused: Bool
     @FocusState private var isRequestNameFocused: Bool
-    @State private var pendingURLInput = ""
     @State private var responseFoldedRanges: [NSRange] = []
     @State private var pendingDeleteRequest: RequestListItem?
     @State private var isLibraryAutoRevealed = false
@@ -47,7 +46,6 @@ struct WorkspaceRootView: View {
 
             Button("Cancel", role: .cancel) {
                 coordinator.cancelWorkspaceReplacement()
-                pendingURLInput = coordinator.state.workspaceRequest.urlString
             }
         } message: {
             Text(replacementDialogMessage)
@@ -72,16 +70,10 @@ struct WorkspaceRootView: View {
             Text(pendingDeleteRequest?.name ?? "")
         }
         .onAppear {
-            pendingURLInput = coordinator.state.workspaceRequest.urlString
             if coordinator.state.workspaceRequest.urlString.isEmpty {
                 DispatchQueue.main.async {
                     isURLFieldFocused = true
                 }
-            }
-        }
-        .onChange(of: coordinator.state.workspaceRequest.urlString) { _, newValue in
-            if pendingURLInput != newValue {
-                pendingURLInput = newValue
             }
         }
     }
@@ -102,9 +94,8 @@ struct WorkspaceRootView: View {
 
     private var urlBinding: Binding<String> {
         Binding(
-            get: { pendingURLInput },
+            get: { coordinator.state.workspaceRequest.urlString },
             set: { newValue in
-                pendingURLInput = newValue
                 processURLFieldInput(newValue)
             }
         )
@@ -144,6 +135,7 @@ struct WorkspaceRootView: View {
                     RequestComposerView(
                         method: methodBinding,
                         url: urlBinding,
+                        variables: coordinator.listVariablesForCurrentContext(),
                         isURLFieldFocused: $isURLFieldFocused,
                         canRun: coordinator.state.canRun,
                         onPaste: handleURLBarPaste,
@@ -607,22 +599,11 @@ struct WorkspaceRootView: View {
 
     private func handleURLBarPaste(_ text: String) -> Bool {
         coordinator.handleURLBarPaste(text)
-        pendingURLInput = coordinator.state.workspaceRequest.urlString
         return true
     }
 
     private func processURLFieldInput(_ text: String) {
         coordinator.handleURLBarTextChange(text)
-    }
-
-    private func variableSegments(for text: String) -> [VariableTemplateSegment] {
-        let variablesByName = coordinator.listVariablesForCurrentContext().reduce(into: [String: Variable]()) { result, variable in
-            if let existing = result[variable.name], existing.updatedAt > variable.updatedAt {
-                return
-            }
-            result[variable.name] = variable
-        }
-        return VariableTemplateParser.parse(text, variablesByName: variablesByName)
     }
 
     private var requestBodyIsJSON: Bool {
@@ -705,6 +686,7 @@ private struct PanelCardBackground: View {
 private struct RequestComposerView: View {
     @Binding var method: HTTPMethod
     @Binding var url: String
+    let variables: [Variable]
     var isURLFieldFocused: FocusState<Bool>.Binding
     let canRun: Bool
     let onPaste: (String) -> Bool
@@ -732,6 +714,7 @@ private struct RequestComposerView: View {
 
                 URLInputField(
                     text: $url,
+                    variables: variables,
                     placeholder: "Paste a URL or cURL command",
                     isFocused: isURLFieldFocused,
                     focusRequest: urlFocusRequest,
@@ -880,13 +863,7 @@ private struct HeaderRowView: View {
     }
 
     private var valueSegments: [VariableTemplateSegment] {
-        let variablesByName = coordinator.listVariablesForCurrentContext().reduce(into: [String: Variable]()) { result, variable in
-            if let existing = result[variable.name], existing.updatedAt > variable.updatedAt {
-                return
-            }
-            result[variable.name] = variable
-        }
-        return VariableTemplateParser.parse(header.value, variablesByName: variablesByName)
+        VariableTemplateParser.parse(header.value, variables: coordinator.listVariablesForCurrentContext())
     }
 
     private var valueContainsVariable: Bool {
@@ -1148,7 +1125,6 @@ private struct VariablesModalView: View {
                         scope: .request
                     )
                     .environmentObject(coordinator)
-                    .accessibilityIdentifier("variables-request-section")
 
                     VariableSectionView(
                         title: "Global",
@@ -1158,7 +1134,6 @@ private struct VariablesModalView: View {
                         scope: .global
                     )
                     .environmentObject(coordinator)
-                    .accessibilityIdentifier("variables-global-section")
                 }
                 .padding(.trailing, 4)
             }
@@ -1173,7 +1148,6 @@ private struct VariablesModalView: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(Color.borderSubtle, lineWidth: 1)
         )
-        .accessibilityIdentifier("variables-modal")
     }
 
     private var requestVariables: [Variable] {
@@ -1207,6 +1181,8 @@ private struct VariableSectionView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .accessibilityIdentifier(scope == .request ? "variables-request-add-button" : "variables-global-add-button")
+                .accessibilityLabel(scope == .request ? "Add Request Variable" : "Add Global Variable")
+                .disabled(draftID != nil)
             }
 
             HStack(spacing: 10) {
@@ -1280,6 +1256,7 @@ private struct VariableDraftRowView: View {
             .foregroundStyle(.red.opacity(0.75))
             .frame(width: 48)
             .accessibilityIdentifier("variable-delete-button-\(id.uuidString)")
+            .accessibilityLabel("Discard Variable Draft")
         }
         .onAppear {
             focusedField = .name
@@ -1292,7 +1269,6 @@ private struct VariableDraftRowView: View {
                 saveIfPossible()
             }
         }
-        .accessibilityIdentifier("variable-row-\(id.uuidString)")
     }
 
     private func saveIfPossible() {
@@ -1354,6 +1330,7 @@ private struct VariableEditableRowView: View {
             .foregroundStyle(.red.opacity(0.75))
             .frame(width: 48)
             .accessibilityIdentifier("variable-delete-button-\(variable.id.uuidString)")
+            .accessibilityLabel("Delete \(variable.name)")
         }
         .onSubmit {
             saveIfChanged()
@@ -1373,12 +1350,12 @@ private struct VariableEditableRowView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
-        .accessibilityIdentifier("variable-row-\(variable.id.uuidString)")
     }
 
     private var isUsed: Bool {
-        coordinator.resolveCurrentRequestForRun().urlTokens.contains(where: { $0.name == variable.name }) ||
-            coordinator.resolveCurrentRequestForRun().headerValueTokensByHeaderID.values.flatMap { $0 }.contains(where: { $0.name == variable.name })
+        let resolution = coordinator.resolveCurrentRequestForRun()
+        return resolution.urlTokens.contains(where: { $0.name == variable.name }) ||
+            resolution.headerValueTokensByHeaderID.values.flatMap { $0 }.contains(where: { $0.name == variable.name })
     }
 
     private func saveIfChanged() {

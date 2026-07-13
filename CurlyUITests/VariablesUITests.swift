@@ -96,6 +96,77 @@ final class VariablesUITests: XCTestCase {
         )
     }
 
+    func testVariablesModalSupportsGlobalVariableCRUD() throws {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+
+        XCTAssertTrue(app.staticTexts["Request"].firstMatch.exists)
+        XCTAssertTrue(app.staticTexts["Global"].firstMatch.exists)
+
+        let addButton = app.buttons["Add Global Variable"].firstMatch
+        XCTAssertTrue(addButton.waitForExistence(timeout: 2))
+        addButton.click()
+
+        XCTAssertFalse(addButton.isEnabled, "Only one unsaved row should be allowed per section.")
+        let draftNameField = variableFields(named: "variable-name-field-", in: app).firstMatch
+        let draftValueField = variableFields(named: "variable-value-field-", in: app).firstMatch
+        XCTAssertTrue(draftNameField.waitForExistence(timeout: 2))
+        XCTAssertTrue(draftValueField.waitForExistence(timeout: 2))
+
+        draftNameField.typeText("api_host")
+        draftValueField.click()
+        draftValueField.typeText("https://example.com")
+        draftValueField.typeKey(.return, modifierFlags: [])
+
+        let savedNameField = app.textFields.matching(NSPredicate(format: "value == %@", "api_host")).firstMatch
+        let savedValueField = app.textFields.matching(NSPredicate(format: "value == %@", "https://example.com")).firstMatch
+        XCTAssertTrue(savedNameField.waitForExistence(timeout: 2))
+        XCTAssertTrue(savedValueField.waitForExistence(timeout: 2))
+        XCTAssertTrue(addButton.isEnabled)
+
+        savedNameField.click()
+        savedNameField.typeKey("a", modifierFlags: .command)
+        savedNameField.typeText("service_host")
+        savedValueField.click()
+        XCTAssertTrue(app.textFields.matching(NSPredicate(format: "value == %@", "service_host")).firstMatch.waitForExistence(timeout: 2))
+
+        let deleteButton = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "variable-delete-button-"))
+            .firstMatch
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: 2))
+        deleteButton.click()
+        let deleteConfirmations = app.buttons.matching(NSPredicate(format: "label == %@", "Delete"))
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            deleteConfirmations.allElementsBoundByIndex.contains { $0.isHittable }
+        })
+        let confirmDelete = try XCTUnwrap(deleteConfirmations.allElementsBoundByIndex.first { $0.isHittable })
+        confirmDelete.click()
+
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            !app.textFields.matching(NSPredicate(format: "value == %@", "service_host")).firstMatch.exists
+        })
+    }
+
+    func testVariablesModalShowsInlineValidationAndKeepsDraftEditable() throws {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        app.buttons["Add Request Variable"].firstMatch.click()
+
+        let nameField = variableFields(named: "variable-name-field-", in: app).firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 2))
+        nameField.click()
+        nameField.typeText("bad name")
+        nameField.typeKey(.return, modifierFlags: [])
+
+        XCTAssertTrue(app.staticTexts["variable-validation-message"].firstMatch.waitForExistence(timeout: 2))
+        XCTAssertTrue(nameField.exists)
+        XCTAssertFalse(app.buttons["Add Request Variable"].firstMatch.isEnabled)
+    }
+
     private func launchWithStubExecutor() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-mode", "--ui-test-stub-executor"]
@@ -105,6 +176,17 @@ final class VariablesUITests: XCTestCase {
             app.typeKey("0", modifierFlags: .command)
         }
         return app
+    }
+
+    private func openVariablesModal(in app: XCUIApplication) {
+        let manageVariables = app.menuItems["Manage Variables…"].firstMatch
+        XCTAssertTrue(manageVariables.waitForExistence(timeout: 2))
+        manageVariables.click()
+        XCTAssertTrue(app.staticTexts["Variables"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    private func variableFields(named prefix: String, in app: XCUIApplication) -> XCUIElementQuery {
+        app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
     }
 
     private func replaceText(_ text: String, in element: XCUIElement) {

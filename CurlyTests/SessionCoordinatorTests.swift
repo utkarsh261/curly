@@ -280,7 +280,12 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNotNil(coordinator.createVariable(name: "auth", value: "token", scope: .global))
 
         coordinator.setURL("http://localhost:{{/post?a={{auth}}")
-        XCTAssertEqual(coordinator.currentRequestIssueMessage, "The URL is not valid yet.")
+        XCTAssertNil(coordinator.currentRequestIssueMessage)
+        coordinator.runCurrentRequest()
+        XCTAssertEqual(
+            coordinator.currentRequestIssueMessage,
+            "Fix invalid variable syntax. Use {{name}} with no spaces. Invalid: {{/post?a="
+        )
 
         coordinator.setURL("http://localhost:{{port}}/post?a={{auth}}")
 
@@ -289,6 +294,37 @@ final class SessionCoordinatorTests: XCTestCase {
             coordinator.resolveCurrentRequestForRun().resolvedRequest?.urlString,
             "http://localhost:9999/post?a=token"
         )
+    }
+
+    func testVariableIssueAppearsOnlyAfterRunAttempt() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://{{host}}/users")
+
+        XCTAssertNil(coordinator.currentRequestIssueMessage)
+
+        coordinator.runCurrentRequest()
+
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "Define host before running this request.")
+    }
+
+    func testDisabledHeaderTemplateDoesNotHideLiveURLValidation() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("not-a-url")
+        coordinator.addHeader()
+        guard let header = coordinator.state.workspaceRequest.headers.last else {
+            XCTFail("Expected a header row.")
+            return
+        }
+        coordinator.updateHeader(id: header.id, name: "X-Ignored", value: "{{unfinished", isEnabled: false)
+
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "Use an absolute http or https URL.")
+    }
+
+    func testPlainInvalidURLKeepsLiveValidationMessage() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("localhost:9999")
+
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "Use an absolute http or https URL.")
     }
 
     func testCreatingMissingVariableClearsPreviousRunIssue() {

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct URLInputField: NSViewRepresentable {
     @Binding var text: String
+    let variables: [Variable]
     let placeholder: String
     var isFocused: FocusState<Bool>.Binding
     let focusRequest: Int
@@ -16,10 +17,8 @@ struct URLInputField: NSViewRepresentable {
         let textField = PasteAwareTextField()
         textField.cell = URLTokenTextFieldCell(textCell: "")
         textField.delegate = context.coordinator
-        context.coordinator.installTextObserversIfNeeded()
-        textField.onTextDidChange = { [weak coordinator = context.coordinator] textField in
-            coordinator?.textFieldDidChange(textField)
-        }
+        textField.variables = variables
+        context.coordinator.installTextObserverIfNeeded()
         textField.placeholderString = placeholder
         textField.isBezeled = false
         textField.isBordered = false
@@ -27,7 +26,6 @@ struct URLInputField: NSViewRepresentable {
         textField.isEditable = true
         textField.isSelectable = true
         textField.refusesFirstResponder = false
-        textField.nextKeyView = textField
         textField.focusRingType = .none
         textField.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textField.lineBreakMode = .byTruncatingMiddle
@@ -42,16 +40,14 @@ struct URLInputField: NSViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.isFocused = isFocused
         context.coordinator.onPaste = onPaste
-        textField.onTextDidChange = { [weak coordinator = context.coordinator] textField in
-            coordinator?.textFieldDidChange(textField)
-        }
+        textField.variables = variables
         textField.placeholderString = placeholder
 
         if let editor = textField.currentEditor() as? NSTextView {
             if editor.string != text {
                 editor.string = text
                 editor.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-                editor.applyURLTokenAttributes()
+                editor.applyURLTokenAttributes(variables: variables)
                 context.coordinator.recordEditedText(text)
             }
         } else if textField.stringValue != text {
@@ -84,7 +80,7 @@ struct URLInputField: NSViewRepresentable {
         private var pendingCurlParseWorkItem: DispatchWorkItem?
         private var previousEditedText = ""
         private weak var activeTextField: PasteAwareTextField?
-        private var didInstallTextObservers = false
+        private var didInstallTextObserver = false
         private var lastHandledFocusRequest = 0
 
         init(
@@ -101,21 +97,15 @@ struct URLInputField: NSViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        func installTextObserversIfNeeded() {
-            guard !didInstallTextObservers else {
+        func installTextObserverIfNeeded() {
+            guard !didInstallTextObserver else {
                 return
             }
-            didInstallTextObservers = true
+            didInstallTextObserver = true
             NotificationCenter.default.addObserver(
                 self,
                 selector: #selector(textDidChangeNotification(_:)),
                 name: NSText.didChangeNotification,
-                object: nil
-            )
-            NotificationCenter.default.addObserver(
-                self,
-                selector: #selector(textViewSelectionDidChangeNotification(_:)),
-                name: NSTextView.didChangeSelectionNotification,
                 object: nil
             )
         }
@@ -128,7 +118,7 @@ struct URLInputField: NSViewRepresentable {
                 textField.needsDisplay = true
                 configureEditor(editor)
                 editor.delegate = self
-                editor.applyURLTokenAttributes()
+                editor.applyURLTokenAttributes(variables: textField.variables)
                 let adjustedRange = URLTokenEditingPolicy.adjustedSelectionRange(
                     editor.selectedRange(),
                     previousSelection: lastSelectedRange,
@@ -154,26 +144,6 @@ struct URLInputField: NSViewRepresentable {
                   textField.currentEditor() === editor else {
                 return
             }
-            handleTextChange(in: textField)
-        }
-
-        @objc private func textViewSelectionDidChangeNotification(_ notification: Notification) {
-            guard let editor = notification.object as? NSTextView,
-                  activeTextField?.currentEditor() === editor else {
-                return
-            }
-            textViewDidChangeSelection(notification)
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let textField = notification.object as? PasteAwareTextField else {
-                return
-            }
-
-            handleTextChange(in: textField)
-        }
-
-        func textFieldDidChange(_ textField: PasteAwareTextField) {
             handleTextChange(in: textField)
         }
 
@@ -209,7 +179,7 @@ struct URLInputField: NSViewRepresentable {
             previousEditedText = currentText
             if let editor {
                 snapSelectionIfNeeded(in: editor)
-                editor.applyURLTokenAttributes()
+                editor.applyURLTokenAttributes(variables: textField.variables)
                 snapSelectionIfNeeded(in: editor)
             }
             scheduleCurlImportIfNeeded(from: currentText, textField: textField)
@@ -233,8 +203,6 @@ struct URLInputField: NSViewRepresentable {
                     return false
                 }
                 return handlePaste(pastedText)
-            case #selector(NSText.insertTab(_:)), #selector(NSText.insertBacktab(_:)):
-                return true
             default:
                 return false
             }
@@ -376,7 +344,7 @@ struct URLInputField: NSViewRepresentable {
             textView.didChangeText()
             textView.setSelectedRange(NSRange(location: range.location + (replacement as NSString).length, length: 0))
             text.wrappedValue = textView.string
-            textView.applyURLTokenAttributes()
+            textView.applyURLTokenAttributes(variables: activeTextField?.variables ?? [])
         }
 
         private func shouldHandleBulkCurlReplacement(
@@ -583,7 +551,15 @@ enum URLTokenEditingPolicy {
 }
 
 final class PasteAwareTextField: NSTextField {
-    var onTextDidChange: ((PasteAwareTextField) -> Void)?
+    var variables: [Variable] = [] {
+        didSet {
+            guard oldValue != variables else { return }
+            if let editor = currentEditor() as? NSTextView {
+                editor.applyURLTokenAttributes(variables: variables)
+            }
+            needsDisplay = true
+        }
+    }
 
     override var acceptsFirstResponder: Bool {
         true
@@ -609,32 +585,13 @@ final class PasteAwareTextField: NSTextField {
         super.mouseDown(with: event)
         beginEditingIfNeeded(selectAll: !wasEditing)
         if let editor = currentEditor() as? NSTextView {
-            editor.applyURLTokenAttributes()
+            editor.applyURLTokenAttributes(variables: variables)
         }
     }
 
     override func accessibilityPerformPress() -> Bool {
         beginEditingIfNeeded(selectAll: true)
         return true
-    }
-
-    override func textDidChange(_ notification: Notification) {
-        super.textDidChange(notification)
-        onTextDidChange?(self)
-    }
-
-    override func textDidEndEditing(_ notification: Notification) {
-        super.textDidEndEditing(notification)
-        let movement = notification.userInfo?["NSTextMovement"] as? Int
-        guard movement == NSTabTextMovement || movement == NSBacktabTextMovement else {
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else {
-                return
-            }
-            self.beginEditingIfNeeded(selectAll: true)
-        }
     }
 
     func beginEditingIfNeeded(selectAll: Bool) {
@@ -689,11 +646,11 @@ final class PasteAwareTextField: NSTextField {
 }
 
 private extension NSTextView {
-    func applyURLTokenAttributes() {
+    func applyURLTokenAttributes(variables: [Variable]) {
         let selectedRangesBeforeStyling = selectedRanges
         let fullRange = NSRange(location: 0, length: (string as NSString).length)
         textStorage?.setAttributes(PasteAwareTextField.baseAttributes, range: fullRange)
-        for segment in VariableTemplateParser.parse(string) {
+        for segment in VariableTemplateParser.parse(string, variables: variables) {
             guard case .token(let token) = segment else {
                 continue
             }
@@ -725,8 +682,11 @@ private final class URLTokenTextFieldCell: NSTextFieldCell {
     }
 
     override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        if let textField = controlView as? PasteAwareTextField,
-           textField.isEditingWithFieldEditor {
+        guard let textField = controlView as? PasteAwareTextField else {
+            super.drawInterior(withFrame: cellFrame, in: controlView)
+            return
+        }
+        if textField.isEditingWithFieldEditor {
             return
         }
 
@@ -736,7 +696,7 @@ private final class URLTokenTextFieldCell: NSTextFieldCell {
         }
 
         let attributedValue = NSMutableAttributedString(string: stringValue, attributes: PasteAwareTextField.baseAttributes)
-        for segment in VariableTemplateParser.parse(stringValue) {
+        for segment in VariableTemplateParser.parse(stringValue, variables: textField.variables) {
             guard case .token(let token) = segment else {
                 continue
             }
@@ -753,12 +713,7 @@ private final class URLTokenFieldEditor: NSTextView {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers == .command,
            event.charactersIgnoringModifiers?.lowercased() == "a" {
-            setSelectedRange(NSRange(location: 0, length: (string as NSString).length))
-            return
-        }
-
-        if modifiers.isEmpty,
-           event.charactersIgnoringModifiers == "\t" {
+            selectAll(nil)
             return
         }
 

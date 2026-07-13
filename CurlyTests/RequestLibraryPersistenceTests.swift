@@ -386,4 +386,35 @@ final class RequestLibraryPersistenceTests: XCTestCase {
 
         XCTAssertEqual(merged.variables, [newer])
     }
+
+    func testFileStoreMigrationPreservesDistinctVariablesWithDuplicateNames() throws {
+        let primaryVariable = Variable(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000910")!,
+            name: "host",
+            value: "primary.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 910),
+            updatedAt: Date(timeIntervalSince1970: 910)
+        )
+        let legacyVariable = Variable(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000911")!,
+            name: "host",
+            value: "legacy.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 911),
+            updatedAt: Date(timeIntervalSince1970: 911)
+        )
+        let primary = FileRequestLibraryContainer(
+            savedRequests: [], drafts: [], hiddenNewDraft: nil, summaries: [], sessionSelection: nil,
+            variables: [primaryVariable]
+        )
+        let legacy = FileRequestLibraryContainer(
+            savedRequests: [], drafts: [], hiddenNewDraft: nil, summaries: [], sessionSelection: nil,
+            variables: [legacyVariable]
+        )
+
+        let merged = FileRequestLibraryRepositories.mergeForMigration(primary: primary, legacy: legacy)
+
+        XCTAssertEqual(merged.variables, [primaryVariable, legacyVariable])
+    }
 }

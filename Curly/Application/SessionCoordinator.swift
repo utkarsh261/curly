@@ -46,6 +46,10 @@ final class SessionCoordinator: ObservableObject {
 
     @Published private(set) var state: SessionState = .initial
 
+    var hasCompletedInitialLibraryLoad: Bool {
+        requestLibrary == nil || didCompleteInitialLibraryLoad
+    }
+
     init(
         initialState: SessionState = .initial,
         curlImporter: CurlImporting = SimpleCurlImporter(),
@@ -361,7 +365,13 @@ final class SessionCoordinator: ObservableObject {
     }
 
     var currentRequestIssueMessage: String? {
-        state.inlineMessage?.text ?? resolveCurrentRequestForRun().errorMessage
+        if let inlineMessage = state.inlineMessage {
+            return inlineMessage.text
+        }
+        guard !state.workspaceRequest.containsVariableTemplateOpening else {
+            return nil
+        }
+        return state.workspaceRequest.lightweightValidationMessage
     }
 
     var currentRequestIssueSeverity: InlineMessageSeverity {
@@ -867,8 +877,20 @@ final class SessionCoordinator: ObservableObject {
                 self.savedRequestsByID = Dictionary(uniqueKeysWithValues: savedList.map { ($0.id, $0) })
                 self.draftsByRequestID = loadedDrafts
                 self.summariesByRequestID = loadedSummaries
-                self.variablesByID = Dictionary(uniqueKeysWithValues: loadedVariables.map { ($0.id, $0) })
+                self.variablesByID = loadedVariables.reduce(into: [:]) { result, variable in
+                    guard let existing = result[variable.id] else {
+                        result[variable.id] = variable
+                        return
+                    }
+                    if variable.updatedAt > existing.updatedAt {
+                        result[variable.id] = variable
+                    }
+                }
                 self.refreshVariablesPresentation()
+                let duplicateNames = VariableLookup(variables: loadedVariables).duplicateNames
+                if !duplicateNames.isEmpty {
+                    self.state.persistenceWarningMessage = Self.duplicateVariableWarning(names: duplicateNames)
+                }
                 self.executionStatesByRequestID = loadedExecutionStates
                 self.hiddenNewDraft = hiddenDraft
                 self.restoreSelection(selection)
@@ -904,6 +926,13 @@ final class SessionCoordinator: ObservableObject {
 
     private func restoreSelection(_ persisted: SessionSelection?) {
         state.isLibraryCollapsed = persisted?.isLibraryCollapsed ?? state.isLibraryCollapsed
+
+        if persisted?.selectedContext == .hiddenNewDraft, hiddenNewDraft != nil {
+            selectedContext = .hiddenNewDraft
+            selectedSavedRequestID = nil
+            applySelectedRequestSnapshot()
+            return
+        }
 
         if !savedRequestsByID.isEmpty {
             if let persisted,
@@ -1047,6 +1076,11 @@ final class SessionCoordinator: ObservableObject {
             }
             return $0.createdAt < $1.createdAt
         }
+    }
+
+    private static func duplicateVariableWarning(names: [String]) -> String {
+        let listedNames = names.joined(separator: ", ")
+        return "Duplicate variable names were found in local storage: \(listedNames). The newest value is used until the duplicate is renamed or deleted."
     }
 
     private func persistDraftStateAfterEdit() {
@@ -1222,11 +1256,9 @@ final class SessionCoordinator: ObservableObject {
         
         let task = Task { [weak self] in
             _ = await previousChain.result
-            
+
             defer {
-                Task { @MainActor in
-                    self?.pendingPersistenceTasks[taskID] = nil
-                }
+                self?.pendingPersistenceTasks[taskID] = nil
             }
 
             do {
