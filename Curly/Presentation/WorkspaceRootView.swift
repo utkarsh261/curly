@@ -28,6 +28,11 @@ struct WorkspaceRootView: View {
             }
 
             autoRevealingLibraryPane
+
+            if coordinator.state.isVariablesModalPresented {
+                variablesModalOverlay
+            }
+
         }
         .frame(minWidth: 980, minHeight: 620)
         .background(WorkspaceBackdrop())
@@ -145,11 +150,11 @@ struct WorkspaceRootView: View {
                         onRun: coordinator.runCurrentRequest
                     )
 
-                    if let requestIssueMessage = coordinator.state.requestIssueMessage {
+                    if let requestIssueMessage = coordinator.currentRequestIssueMessage {
                         InlineMessageCard(
-                            title: coordinator.state.requestIssueSeverity == .warning ? "Request Warning" : "Request Issue",
+                            title: coordinator.currentRequestIssueSeverity == .warning ? "Request Warning" : "Request Issue",
                             message: requestIssueMessage,
-                            severity: coordinator.state.requestIssueSeverity
+                            severity: coordinator.currentRequestIssueSeverity
                         )
                     }
 
@@ -170,6 +175,23 @@ struct WorkspaceRootView: View {
             }
         }
         .background(WorkspaceBackdrop())
+    }
+
+    private var variablesModalOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.24)
+                .ignoresSafeArea()
+                .accessibilityIdentifier("variables-modal-backdrop")
+                .onTapGesture {
+                    coordinator.dismissVariablesModal()
+                }
+
+            VariablesModalView()
+                .environmentObject(coordinator)
+                .frame(width: 760, height: 520)
+                .transition(.scale(scale: 0.98).combined(with: .opacity))
+        }
+        .accessibilityIdentifier("variables-modal-overlay")
     }
 
     private var requestHeader: some View {
@@ -593,6 +615,16 @@ struct WorkspaceRootView: View {
         coordinator.handleURLBarTextChange(text)
     }
 
+    private func variableSegments(for text: String) -> [VariableTemplateSegment] {
+        let variablesByName = coordinator.listVariablesForCurrentContext().reduce(into: [String: Variable]()) { result, variable in
+            if let existing = result[variable.name], existing.updatedAt > variable.updatedAt {
+                return
+            }
+            result[variable.name] = variable
+        }
+        return VariableTemplateParser.parse(text, variablesByName: variablesByName)
+    }
+
     private var requestBodyIsJSON: Bool {
         let bodyText = coordinator.state.workspaceRequest.body.textValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !bodyText.isEmpty else {
@@ -677,6 +709,7 @@ private struct RequestComposerView: View {
     let canRun: Bool
     let onPaste: (String) -> Bool
     let onRun: () -> Void
+    @State private var urlFocusRequest = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -701,9 +734,15 @@ private struct RequestComposerView: View {
                     text: $url,
                     placeholder: "Paste a URL or cURL command",
                     isFocused: isURLFieldFocused,
+                    focusRequest: urlFocusRequest,
                     onPaste: onPaste
                 )
                 .frame(minHeight: 24)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    urlFocusRequest += 1
+                    isURLFieldFocused.wrappedValue = true
+                }
 
                 Button {
                     onRun()
@@ -753,11 +792,13 @@ private struct RequestComposerView: View {
     private var borderColor: Color {
         isURLFieldFocused.wrappedValue ? Color.accent : Color.borderSubtle
     }
+
 }
 
 private struct HeaderRowView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
     let header: Header
+    @FocusState private var isValueFocused: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -778,6 +819,7 @@ private struct HeaderRowView: View {
             )
             .textFieldStyle(.roundedBorder)
             .frame(minWidth: 130)
+            .accessibilityIdentifier("header-name-field-\(header.id.uuidString)")
             .overlay {
                 if header.isEnabled && header.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -785,14 +827,37 @@ private struct HeaderRowView: View {
                 }
             }
 
-            TextField(
-                "Value",
-                text: Binding(
-                    get: { header.value },
-                    set: { coordinator.updateHeader(id: header.id, value: $0) }
+            ZStack(alignment: .leading) {
+                TextField(
+                    "Value",
+                    text: Binding(
+                        get: { header.value },
+                        set: { coordinator.updateHeader(id: header.id, value: $0) }
+                    )
                 )
-            )
-            .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.roundedBorder)
+                .focused($isValueFocused)
+                .opacity(isValueFocused || !valueContainsVariable ? 1 : 0)
+                .accessibilityIdentifier("header-value-field-\(header.id.uuidString)")
+
+                if !isValueFocused && valueContainsVariable {
+                    VariableTemplateDisplay(segments: valueSegments)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(nsColor: .textBackgroundColor))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .stroke(Color.borderSubtle.opacity(0.75), lineWidth: 1)
+                                )
+                        )
+                        .accessibilityIdentifier("header-value-variable-template-display")
+                        .onTapGesture {
+                            isValueFocused = true
+                        }
+                }
+            }
 
             Button {
                 coordinator.removeHeader(id: header.id)
@@ -812,6 +877,96 @@ private struct HeaderRowView: View {
                         .stroke(Color.borderSubtle.opacity(0.65), lineWidth: 1)
                 )
         )
+    }
+
+    private var valueSegments: [VariableTemplateSegment] {
+        let variablesByName = coordinator.listVariablesForCurrentContext().reduce(into: [String: Variable]()) { result, variable in
+            if let existing = result[variable.name], existing.updatedAt > variable.updatedAt {
+                return
+            }
+            result[variable.name] = variable
+        }
+        return VariableTemplateParser.parse(header.value, variablesByName: variablesByName)
+    }
+
+    private var valueContainsVariable: Bool {
+        valueSegments.contains { segment in
+            if case .token = segment {
+                return true
+            }
+            return false
+        }
+    }
+}
+
+private struct VariableTemplateDisplay: View {
+    let segments: [VariableTemplateSegment]
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
+                switch segment {
+                case .text(let text, _):
+                    Text(text.isEmpty ? " " : text)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                case .token(let token):
+                    VariableTokenChip(token: token)
+                }
+            }
+        }
+        .font(.body.monospaced())
+        .lineLimit(1)
+    }
+}
+
+private struct VariableTokenChip: View {
+    let token: VariableToken
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(tint)
+                .frame(width: 5, height: 5)
+            Text(token.name ?? token.rawText)
+                .font(.caption.monospaced().weight(.semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+            Capsule(style: .continuous)
+                .fill(tint.opacity(0.14))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(tint.opacity(0.5), lineWidth: 1)
+                )
+        )
+        .foregroundStyle(tint)
+        .help(helpText)
+        .accessibilityIdentifier("variable-token-chip-\(token.name ?? "invalid")")
+    }
+
+    private var tint: Color {
+        switch token.status {
+        case .resolved:
+            return Color.accent
+        case .missing:
+            return .orange
+        case .invalid:
+            return .red
+        }
+    }
+
+    private var helpText: String {
+        switch token.status {
+        case .resolved:
+            return "\(token.name ?? token.rawText) resolves to \(token.resolvedValue ?? "")"
+        case .missing:
+            return "\(token.name ?? token.rawText) is missing"
+        case .invalid:
+            return "\(token.rawText) has invalid syntax"
+        }
     }
 }
 
@@ -896,6 +1051,7 @@ private struct RequestEditorAccordion: View {
                 .labelStyle(.iconOnly)
                 .foregroundStyle(Color.accent)
                 .help("Add a header")
+                .accessibilityIdentifier("add-header-button")
             }
         }
         .transition(.opacity)
@@ -958,6 +1114,314 @@ private struct RequestEditorAccordion: View {
                 }
             }
             .frame(maxHeight: .infinity)
+        }
+    }
+}
+
+private struct VariablesModalView: View {
+    @EnvironmentObject private var coordinator: SessionCoordinator
+    @State private var requestDraftID: UUID?
+    @State private var globalDraftID: UUID?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Variables")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button {
+                    coordinator.dismissVariablesModal()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("variables-modal-close-button")
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    VariableSectionView(
+                        title: "Request",
+                        emptyMessage: "No request variables yet. Add one for this request.",
+                        variables: requestVariables,
+                        draftID: $requestDraftID,
+                        scope: .request
+                    )
+                    .environmentObject(coordinator)
+                    .accessibilityIdentifier("variables-request-section")
+
+                    VariableSectionView(
+                        title: "Global",
+                        emptyMessage: "No global variables yet. Add one for reuse across requests.",
+                        variables: globalVariables,
+                        draftID: $globalDraftID,
+                        scope: .global
+                    )
+                    .environmentObject(coordinator)
+                    .accessibilityIdentifier("variables-global-section")
+                }
+                .padding(.trailing, 4)
+            }
+        }
+        .padding(22)
+        .background(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(Color.surfaceRaised)
+                .shadow(color: .black.opacity(0.28), radius: 28, y: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.borderSubtle, lineWidth: 1)
+        )
+        .accessibilityIdentifier("variables-modal")
+    }
+
+    private var requestVariables: [Variable] {
+        coordinator.listVariablesForCurrentContext().filter { $0.scope == .request }
+    }
+
+    private var globalVariables: [Variable] {
+        coordinator.listVariablesForCurrentContext().filter { $0.scope == .global }
+    }
+}
+
+private struct VariableSectionView: View {
+    @EnvironmentObject private var coordinator: SessionCoordinator
+    let title: String
+    let emptyMessage: String
+    let variables: [Variable]
+    @Binding var draftID: UUID?
+    let scope: VariableScope
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.headline.weight(.semibold))
+                Spacer()
+                Button {
+                    draftID = UUID()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .accessibilityIdentifier(scope == .request ? "variables-request-add-button" : "variables-global-add-button")
+            }
+
+            HStack(spacing: 10) {
+                Text("Name")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Value")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text("Delete")
+                    .frame(width: 48, alignment: .center)
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Color.textMuted)
+            .padding(.horizontal, 10)
+
+            if variables.isEmpty && draftID == nil {
+                Text(emptyMessage)
+                    .font(.caption)
+                    .foregroundStyle(Color.textMuted)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+
+            if let draftID {
+                VariableDraftRowView(id: draftID, scope: scope) {
+                    self.draftID = nil
+                }
+                .environmentObject(coordinator)
+            }
+
+            ForEach(variables) { variable in
+                VariableEditableRowView(variable: variable)
+                    .environmentObject(coordinator)
+            }
+        }
+    }
+}
+
+private struct VariableDraftRowView: View {
+    enum Field {
+        case name
+        case value
+    }
+
+    @EnvironmentObject private var coordinator: SessionCoordinator
+    let id: UUID
+    let scope: VariableScope
+    let onFinish: () -> Void
+    @State private var name = ""
+    @State private var value = ""
+    @State private var validationMessage: String?
+    @FocusState private var focusedField: Field?
+
+    var body: some View {
+        variableRowShell(validationMessage: validationMessage) {
+            TextField("name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .name)
+                .accessibilityIdentifier("variable-name-field-\(id.uuidString)")
+
+            TextField("value", text: $value)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .value)
+                .accessibilityIdentifier("variable-value-field-\(id.uuidString)")
+
+            Button {
+                onFinish()
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red.opacity(0.75))
+            .frame(width: 48)
+            .accessibilityIdentifier("variable-delete-button-\(id.uuidString)")
+        }
+        .onAppear {
+            focusedField = .name
+        }
+        .onSubmit {
+            saveIfPossible()
+        }
+        .onChange(of: focusedField) { oldValue, newValue in
+            if oldValue != nil && newValue == nil {
+                saveIfPossible()
+            }
+        }
+        .accessibilityIdentifier("variable-row-\(id.uuidString)")
+    }
+
+    private func saveIfPossible() {
+        let normalized = Variable.normalizedNameForStorage(name)
+        if normalized.isEmpty && value.isEmpty {
+            onFinish()
+            return
+        }
+        guard Variable.isValidName(normalized) else {
+            validationMessage = "Use letters, numbers, underscores, or hyphens. Start with a letter or underscore."
+            return
+        }
+        guard coordinator.createVariable(name: normalized, value: value, scope: scope) != nil else {
+            validationMessage = "A variable named \(normalized) already exists."
+            return
+        }
+        onFinish()
+    }
+}
+
+private struct VariableEditableRowView: View {
+    enum Field {
+        case name
+        case value
+    }
+
+    @EnvironmentObject private var coordinator: SessionCoordinator
+    let variable: Variable
+    @State private var name: String
+    @State private var value: String
+    @State private var validationMessage: String?
+    @State private var isDeleteConfirmationPresented = false
+    @FocusState private var focusedField: Field?
+
+    init(variable: Variable) {
+        self.variable = variable
+        _name = State(initialValue: variable.name)
+        _value = State(initialValue: variable.value)
+    }
+
+    var body: some View {
+        variableRowShell(isUsed: isUsed, validationMessage: validationMessage) {
+            TextField("name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .name)
+                .accessibilityIdentifier("variable-name-field-\(variable.id.uuidString)")
+
+            TextField("value", text: $value)
+                .textFieldStyle(.roundedBorder)
+                .focused($focusedField, equals: .value)
+                .accessibilityIdentifier("variable-value-field-\(variable.id.uuidString)")
+
+            Button {
+                isDeleteConfirmationPresented = true
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red.opacity(0.75))
+            .frame(width: 48)
+            .accessibilityIdentifier("variable-delete-button-\(variable.id.uuidString)")
+        }
+        .onSubmit {
+            saveIfChanged()
+        }
+        .onChange(of: focusedField) { oldValue, newValue in
+            if oldValue != nil && newValue == nil {
+                saveIfChanged()
+            }
+        }
+        .confirmationDialog(
+            "Delete \(variable.name)?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                coordinator.deleteVariable(id: variable.id)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .accessibilityIdentifier("variable-row-\(variable.id.uuidString)")
+    }
+
+    private var isUsed: Bool {
+        coordinator.resolveCurrentRequestForRun().urlTokens.contains(where: { $0.name == variable.name }) ||
+            coordinator.resolveCurrentRequestForRun().headerValueTokensByHeaderID.values.flatMap { $0 }.contains(where: { $0.name == variable.name })
+    }
+
+    private func saveIfChanged() {
+        guard name != variable.name || value != variable.value else { return }
+        let normalized = Variable.normalizedNameForStorage(name)
+        guard Variable.isValidName(normalized) else {
+            validationMessage = "Use letters, numbers, underscores, or hyphens. Start with a letter or underscore."
+            return
+        }
+        guard coordinator.updateVariable(id: variable.id, name: normalized, value: value) != nil else {
+            validationMessage = "A variable named \(normalized) already exists."
+            return
+        }
+        validationMessage = nil
+    }
+}
+
+@ViewBuilder
+private func variableRowShell<Content: View>(
+    isUsed: Bool = false,
+    validationMessage: String?,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: 10) {
+            content()
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(isUsed ? Color.accent.opacity(0.13) : Color.surfaceInset)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.borderSubtle.opacity(0.65), lineWidth: 1)
+                )
+        )
+
+        if let validationMessage {
+            Text(validationMessage)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .padding(.horizontal, 10)
+                .accessibilityIdentifier("variable-validation-message")
         }
     }
 }

@@ -179,6 +179,95 @@ final class RequestLibraryPersistenceTests: XCTestCase {
         XCTAssertNil(summaryAfterDelete)
     }
 
+    func testVariableRepositoryCRUDAndMigration() async throws {
+        let repository = InMemoryVariableRepository()
+        let oldRequestID = UUID()
+        let newRequestID = UUID()
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_600)
+        let variable = Variable(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000600")!,
+            name: "base_url",
+            value: "example.com",
+            scope: .request,
+            requestID: oldRequestID,
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+
+        try await repository.saveVariable(variable)
+        let savedVariables = try await repository.listVariables()
+        XCTAssertEqual(savedVariables, [variable])
+
+        try await repository.migrateVariables(from: oldRequestID, to: newRequestID)
+        let migrated = try await repository.listVariables()
+        XCTAssertEqual(migrated.first?.requestID, newRequestID)
+
+        try await repository.deleteVariables(forRequestID: newRequestID)
+        let variablesAfterDelete = try await repository.listVariables()
+        XCTAssertEqual(variablesAfterDelete, [])
+    }
+
+    func testFacadeDeleteRemovesRequestVariables() async throws {
+        let savedRepository = InMemorySavedRequestRepository()
+        let draftRepository = InMemoryRequestDraftRepository()
+        let summaryRepository = InMemoryExecutionSummaryRepository()
+        let variableRepository = InMemoryVariableRepository()
+        let facade = InMemoryWorkspaceRepositoryFacade(
+            savedRequests: savedRepository,
+            drafts: draftRepository,
+            summaries: summaryRepository,
+            variables: variableRepository
+        )
+        let requestID = UUID()
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_700)
+        let saved = SavedRequest(
+            id: requestID,
+            name: "Users",
+            request: Request(method: .get, urlString: "https://example.com", headers: [], body: .none),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            lastEditedAt: timestamp,
+            nameWasManuallyEdited: true
+        )
+        let requestVariable = Variable(name: "base_url", value: "example.com", scope: .request, requestID: requestID, createdAt: timestamp, updatedAt: timestamp)
+        let globalVariable = Variable(name: "api_version", value: "v1", scope: .global, createdAt: timestamp, updatedAt: timestamp)
+
+        try await savedRepository.upsert(saved)
+        try await variableRepository.saveVariable(requestVariable)
+        try await variableRepository.saveVariable(globalVariable)
+
+        try await facade.deleteSavedRequestAndRelatedState(id: requestID)
+
+        let variablesAfterDelete = try await variableRepository.listVariables()
+        XCTAssertEqual(variablesAfterDelete, [globalVariable])
+    }
+
+    func testFileVariableRepositoryDecodesOldJSONAndPersistsVariables() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("curly-variable-old-\(UUID().uuidString)")
+            .appendingPathExtension("json")
+        let oldJSON = #"{"savedRequests":[],"drafts":[],"hiddenNewDraft":null,"summaries":[],"sessionSelection":null}"#
+        try oldJSON.data(using: .utf8)!.write(to: fileURL)
+        let repository = try FileRequestLibraryRepositories(fileURL: fileURL)
+
+        let initialVariables = try await repository.listVariables()
+        XCTAssertEqual(initialVariables, [])
+
+        let variable = Variable(
+            id: UUID(uuidString: "00000000-0000-0000-0000-000000000800")!,
+            name: "base_url",
+            value: "example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 800),
+            updatedAt: Date(timeIntervalSince1970: 800)
+        )
+        try await repository.saveVariable(variable)
+
+        let reloaded = try FileRequestLibraryRepositories(fileURL: fileURL)
+        let reloadedVariables = try await reloaded.listVariables()
+        XCTAssertEqual(reloadedVariables, [variable])
+    }
+
     func testFileStoreMigrationMergesLegacyRequestsAndDropsGeneratedPlaceholder() throws {
         let placeholder = SavedRequest(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!,
@@ -256,5 +345,45 @@ final class RequestLibraryPersistenceTests: XCTestCase {
         let merged = FileRequestLibraryRepositories.mergeForMigration(primary: primary, legacy: legacy)
 
         XCTAssertEqual(merged.savedRequests, [newer])
+    }
+
+    func testFileStoreMigrationMergesVariablesByUpdatedAt() throws {
+        let variableID = UUID(uuidString: "00000000-0000-0000-0000-000000000900")!
+        let older = Variable(
+            id: variableID,
+            name: "base_url",
+            value: "old.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 900),
+            updatedAt: Date(timeIntervalSince1970: 900)
+        )
+        let newer = Variable(
+            id: variableID,
+            name: "base_url",
+            value: "new.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 900),
+            updatedAt: Date(timeIntervalSince1970: 901)
+        )
+        let primary = FileRequestLibraryContainer(
+            savedRequests: [],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil,
+            variables: [older]
+        )
+        let legacy = FileRequestLibraryContainer(
+            savedRequests: [],
+            drafts: [],
+            hiddenNewDraft: nil,
+            summaries: [],
+            sessionSelection: nil,
+            variables: [newer]
+        )
+
+        let merged = FileRequestLibraryRepositories.mergeForMigration(primary: primary, legacy: legacy)
+
+        XCTAssertEqual(merged.variables, [newer])
     }
 }

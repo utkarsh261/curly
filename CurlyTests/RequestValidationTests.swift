@@ -30,4 +30,186 @@ final class RequestValidationTests: XCTestCase {
             "Use an absolute http or https URL."
         )
     }
+
+    func testVariableNameValidationUsesStrictSyntax() {
+        XCTAssertTrue(Variable.isValidName("base_url"))
+        XCTAssertTrue(Variable.isValidName("_token"))
+        XCTAssertTrue(Variable.isValidName("tenant-id"))
+        XCTAssertFalse(Variable.isValidName(""))
+        XCTAssertFalse(Variable.isValidName(" user_id "))
+        XCTAssertFalse(Variable.isValidName("user id"))
+        XCTAssertFalse(Variable.isValidName("123_id"))
+    }
+
+    func testVariableParserFindsResolvedMissingAndInvalidTokens() {
+        let variable = Variable(
+            name: "base_url",
+            value: "example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let segments = VariableTemplateParser.parse(
+            "https://{{base_url}}/{{user_id}}/{{ user id }}",
+            variables: [variable]
+        )
+        let tokens = segments.compactMap { segment -> VariableToken? in
+            if case .token(let token) = segment { return token }
+            return nil
+        }
+
+        XCTAssertEqual(tokens.map(\.status), [.resolved, .missing, .invalid])
+        XCTAssertEqual(tokens[0].name, "base_url")
+        XCTAssertEqual(tokens[0].resolvedValue, "example.com")
+        XCTAssertEqual(tokens[1].name, "user_id")
+        XCTAssertEqual(tokens[2].rawText, "{{ user id }}")
+    }
+
+    func testURLTokenEditingPolicyTreatsVariablesAsAtomicRanges() {
+        let text = "http://x/{{auth}}/z"
+        let tokenRange = NSRange(location: 9, length: 8)
+
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRanges(in: text), [tokenRange])
+        XCTAssertEqual(
+            URLTokenEditingPolicy.adjustedSelectionRange(
+                NSRange(location: 11, length: 0),
+                previousSelection: NSRange(location: 9, length: 0),
+                in: text
+            ),
+            NSRange(location: 17, length: 0)
+        )
+        XCTAssertEqual(
+            URLTokenEditingPolicy.adjustedSelectionRange(
+                NSRange(location: 15, length: 0),
+                previousSelection: NSRange(location: 17, length: 0),
+                in: text
+            ),
+            NSRange(location: 9, length: 0)
+        )
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRangeBeforeOrContainingCaret(17, in: text), tokenRange)
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRangeBeforeOrContainingCaret(16, in: text), tokenRange)
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRangeAfterOrContainingCaret(9, in: text), tokenRange)
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRangeAfterOrContainingCaret(10, in: text), tokenRange)
+        XCTAssertEqual(
+            URLTokenEditingPolicy.expandedRangeIncludingTokens(NSRange(location: 12, length: 1), in: text),
+            tokenRange
+        )
+        XCTAssertEqual(
+            URLTokenEditingPolicy.expandedRangeIncludingTokens(NSRange(location: 16, length: 1), in: text),
+            tokenRange,
+            "Backspace fallback inside a token must delete the entire token, not a single brace."
+        )
+        XCTAssertEqual(
+            URLTokenEditingPolicy.correctedTextAfterAtomicTokenEdit(
+                previousText: text,
+                currentText: "http://x/{{auth}/z"
+            )?.text,
+            "http://x//z",
+            "If AppKit applies a one-character token deletion first, the next normalization pass must delete the whole token."
+        )
+        XCTAssertEqual(
+            URLTokenEditingPolicy.expandedRangeIncludingTokens(NSRange(location: 17, length: 0), in: text),
+            NSRange(location: 17, length: 0),
+            "Typing immediately after a token must not replace the token."
+        )
+    }
+
+    func testURLTokenEditingPolicyIgnoresIncompleteVariablesUntilClosed() {
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRanges(in: "http://x/{{auth"), [])
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRanges(in: "http://x/{{auth}/z"), [])
+    }
+
+    func testIncompleteOpeningDoesNotConsumeLaterCompleteVariable() {
+        let text = "http://localhost:{{/post?a={{auth}}"
+        let source = text as NSString
+        let authRange = source.range(of: "{{auth}}")
+        let incompleteCaret = source.range(of: "{{/post").location + 2
+
+        XCTAssertEqual(URLTokenEditingPolicy.tokenRanges(in: text), [authRange])
+        XCTAssertEqual(
+            URLTokenEditingPolicy.adjustedSelectionRange(
+                NSRange(location: incompleteCaret, length: 0),
+                previousSelection: NSRange(location: incompleteCaret - 1, length: 0),
+                in: text
+            ),
+            NSRange(location: incompleteCaret, length: 0),
+            "The caret must remain editable beside an incomplete opening instead of jumping to the later token."
+        )
+    }
+
+    func testVariableResolverResolvesURLAndEnabledHeaderValues() {
+        let tokenHeader = Header(name: "Authorization", value: "Bearer {{token}}", isEnabled: true)
+        let request = Request(
+            method: .get,
+            urlString: "https://{{base_url}}/users/{{user_id}}",
+            headers: [tokenHeader],
+            body: .text(#"{"id":"{{literal_body}}"}"#)
+        )
+        let variables = [
+            Variable(name: "base_url", value: "example.com", scope: .request, requestID: UUID()),
+            Variable(name: "user_id", value: "42", scope: .request, requestID: UUID()),
+            Variable(name: "token", value: "abc", scope: .global)
+        ]
+
+        let result = VariableResolver.resolve(request, variables: variables)
+
+        XCTAssertEqual(result.resolvedRequest?.urlString, "https://example.com/users/42")
+        XCTAssertEqual(result.resolvedRequest?.headers.first?.value, "Bearer abc")
+        XCTAssertEqual(result.resolvedRequest?.body, .text(#"{"id":"{{literal_body}}"}"#))
+        XCTAssertEqual(request.urlString, "https://{{base_url}}/users/{{user_id}}")
+    }
+
+    func testVariableResolverBlocksMissingEnabledHeaderButIgnoresDisabledHeader() {
+        let enabled = Header(name: "Authorization", value: "Bearer {{token}}", isEnabled: true)
+        let disabled = Header(name: "X-Debug", value: "{{debug_token}}", isEnabled: false)
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [enabled, disabled],
+            body: .none
+        )
+
+        let missingEnabled = VariableResolver.resolve(request, variables: [])
+
+        XCTAssertNil(missingEnabled.resolvedRequest)
+        XCTAssertEqual(missingEnabled.missingNames, ["token"])
+
+        let resolved = VariableResolver.resolve(
+            Request(method: .get, urlString: "https://example.com", headers: [disabled], body: .none),
+            variables: []
+        )
+
+        XCTAssertEqual(resolved.resolvedRequest?.urlString, "https://example.com")
+        XCTAssertEqual(resolved.headerValueTokensByHeaderID[disabled.id]?.first?.status, .missing)
+    }
+
+    func testVariableResolverBlocksInvalidSyntaxBeforeMissingVariables() {
+        let request = Request(
+            method: .get,
+            urlString: "https://{{ base_url }}/{{user_id}}",
+            headers: [],
+            body: .none
+        )
+
+        let result = VariableResolver.resolve(request, variables: [])
+
+        XCTAssertNil(result.resolvedRequest)
+        XCTAssertEqual(result.invalidTokens, ["{{ base_url }}"])
+        XCTAssertEqual(result.missingNames, [])
+        XCTAssertEqual(result.errorMessage, "Fix invalid variable syntax. Use {{name}} with no spaces. Invalid: {{ base_url }}")
+    }
+
+    func testVariableResolverDoesNotResolveRecursively() {
+        let request = Request(method: .get, urlString: "https://{{base_url}}/users", headers: [], body: .none)
+        let variables = [
+            Variable(name: "base_url", value: "{{host}}", scope: .global),
+            Variable(name: "host", value: "example.com", scope: .global)
+        ]
+
+        let result = VariableResolver.resolve(request, variables: variables)
+
+        XCTAssertNil(result.resolvedRequest)
+        XCTAssertEqual(result.errorMessage, "The URL is not valid yet.")
+    }
 }

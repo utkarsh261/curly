@@ -221,6 +221,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         let hidden = InMemoryHiddenNewDraftRepository()
         let summaries = InMemoryExecutionSummaryRepository()
         let selection = InMemorySessionSelectionRepository()
+        let variables = InMemoryVariableRepository()
         try await selection.saveSelection(
             SessionSelection(
                 selectedSavedRequestID: persisted.id,
@@ -228,14 +229,15 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
                 updatedAt: timestamp
             )
         )
-        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries)
+        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries, variables: variables)
         let dependencies = RequestLibraryDependencies(
             savedRequests: saved,
             drafts: drafts,
             hiddenDraft: hidden,
             summaries: summaries,
             selection: selection,
-            workspaceFacade: facade
+            workspaceFacade: facade,
+            variables: variables
         )
 
         let coordinator = SessionCoordinator(requestLibrary: dependencies)
@@ -278,14 +280,16 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         let hidden = InMemoryHiddenNewDraftRepository()
         let summaries = InMemoryExecutionSummaryRepository()
         let selection = InMemorySessionSelectionRepository()
-        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries)
+        let variables = InMemoryVariableRepository()
+        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries, variables: variables)
         let dependencies = RequestLibraryDependencies(
             savedRequests: saved,
             drafts: drafts,
             hiddenDraft: hidden,
             summaries: summaries,
             selection: selection,
-            workspaceFacade: facade
+            workspaceFacade: facade,
+            variables: variables
         )
         return SessionCoordinator(requestLibrary: dependencies)
     }
@@ -298,7 +302,8 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
             hiddenDraft: repositories,
             summaries: repositories,
             selection: repositories,
-            workspaceFacade: repositories
+            workspaceFacade: repositories,
+            variables: repositories
         )
         return SessionCoordinator(requestLibrary: dependencies)
     }

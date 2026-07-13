@@ -152,6 +152,18 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.canRun)
     }
 
+    func testURLBarPasteParsesCurlWhenCurrentURLIsTheTypedCurlDraft() {
+        let coordinator = SessionCoordinator()
+        coordinator.handleURLBarTextChange("curl https://www.example.com")
+
+        coordinator.handleURLBarPaste("curl https://www.example.com")
+
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://www.example.com")
+        XCTAssertNil(coordinator.state.replaceConfirmationState)
+        XCTAssertNil(coordinator.state.requestIssueMessage)
+        XCTAssertTrue(coordinator.state.canRun)
+    }
+
     func testNonEmptyWorkspaceCurlPasteStagesReplacementConfirmation() {
         let coordinator = SessionCoordinator()
         coordinator.setURL("https://current.example.com")
@@ -260,6 +272,36 @@ final class SessionCoordinatorTests: XCTestCase {
         coordinator.setURL("https://edited.example.com")
 
         XCTAssertNil(coordinator.state.requestIssueMessage)
+    }
+
+    func testVariableAwareRequestIssueClearsWhenTemplatedURLIsFixed() {
+        let coordinator = SessionCoordinator()
+        XCTAssertNotNil(coordinator.createVariable(name: "port", value: "9999", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "auth", value: "token", scope: .global))
+
+        coordinator.setURL("http://localhost:{{/post?a={{auth}}")
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "The URL is not valid yet.")
+
+        coordinator.setURL("http://localhost:{{port}}/post?a={{auth}}")
+
+        XCTAssertNil(coordinator.currentRequestIssueMessage)
+        XCTAssertEqual(
+            coordinator.resolveCurrentRequestForRun().resolvedRequest?.urlString,
+            "http://localhost:9999/post?a=token"
+        )
+    }
+
+    func testCreatingMissingVariableClearsPreviousRunIssue() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://{{host}}/users")
+        coordinator.runCurrentRequest()
+
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "Define host before running this request.")
+
+        XCTAssertNotNil(coordinator.createVariable(name: "host", value: "example.com", scope: .global))
+
+        XCTAssertNil(coordinator.currentRequestIssueMessage)
+        XCTAssertEqual(coordinator.state.executionState, .failed)
     }
 
     func testMalformedCurlLeavesWorkspaceUntouchedAndSetsInlineError() {
@@ -619,6 +661,82 @@ final class SessionCoordinatorTests: XCTestCase {
                 timestamp: Date()
             )
         )
+    }
+
+    func testRunResolvesVariablesWithoutMutatingWorkspaceRequest() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(requestExecutor: executor)
+        coordinator.setURL("https://{{base_url}}/users/{{user_id}}")
+        coordinator.addHeader()
+        let headerID = coordinator.state.workspaceRequest.headers[0].id
+        coordinator.updateHeader(id: headerID, name: "Authorization", value: "Bearer {{token}}")
+        XCTAssertNotNil(coordinator.createVariable(name: "base_url", value: "example.com", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "user_id", value: "42", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "abc", scope: .global))
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+
+        let sent = await executor.invocations[0]
+        XCTAssertEqual(sent.urlString, "https://example.com/users/42")
+        XCTAssertEqual(sent.headers.first?.value, "Bearer abc")
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://{{base_url}}/users/{{user_id}}")
+        XCTAssertEqual(coordinator.state.workspaceRequest.headers.first?.value, "Bearer {{token}}")
+
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: sent,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.05,
+                timestamp: Date()
+            )
+        )
+    }
+
+    func testRunBlocksMissingVariableWithoutExecutorInvocation() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(requestExecutor: executor)
+        coordinator.setURL("https://{{base_url}}/users")
+
+        coordinator.runCurrentRequest()
+
+        let invocationCount = await executor.invocationCount
+        XCTAssertEqual(invocationCount, 0)
+        XCTAssertEqual(coordinator.state.executionState, .failed)
+        XCTAssertEqual(coordinator.state.inlineErrorMessage, "Define base_url before running this request.")
+    }
+
+    func testVariablesModalPresentationAndCRUD() {
+        let coordinator = SessionCoordinator()
+
+        XCTAssertFalse(coordinator.state.isVariablesModalPresented)
+        coordinator.presentVariablesModal()
+        XCTAssertTrue(coordinator.state.isVariablesModalPresented)
+
+        let requestVariable = coordinator.createVariable(name: " user_id ", value: "42", scope: .request)
+        let globalVariable = coordinator.createVariable(name: "base_url", value: "https://api.example.com", scope: .global)
+        XCTAssertEqual(requestVariable?.name, "user_id")
+        XCTAssertEqual(globalVariable?.scope, .global)
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().map(\.name).sorted(), ["base_url", "user_id"])
+
+        XCTAssertNil(coordinator.createVariable(name: "base_url", value: "duplicate", scope: .request))
+        XCTAssertNil(coordinator.createVariable(name: "bad name", value: "x", scope: .global))
+
+        guard let requestVariable else {
+            XCTFail("Expected request variable to be created.")
+            return
+        }
+        XCTAssertNotNil(coordinator.updateVariable(id: requestVariable.id, name: "account_id", value: "acct_123"))
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().map(\.name).sorted(), ["account_id", "base_url"])
+
+        coordinator.deleteVariable(id: requestVariable.id)
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().map(\.name), ["base_url"])
+
+        coordinator.dismissVariablesModal()
+        XCTAssertFalse(coordinator.state.isVariablesModalPresented)
     }
 
     private func waitUntil(
