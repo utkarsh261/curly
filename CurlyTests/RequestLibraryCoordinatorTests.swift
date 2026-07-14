@@ -147,12 +147,12 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
 
         do {
             let coordinator = try makeFileBackedCoordinator(fileURL: fileURL)
-            await waitUntil { coordinator.state.selectedRequestContext == .saved }
+            await waitUntil("initial library load") { coordinator.hasCompletedInitialLibraryLoad }
 
             coordinator.updateWorkspaceName("Persisted")
             coordinator.setURL("https://api.example.com/base")
             coordinator.saveCurrentRequest()
-            await waitUntil { coordinator.state.requestListItems.count == 1 }
+            await waitUntil("saved request creation") { coordinator.state.requestListItems.count == 1 }
 
             coordinator.setURL("https://api.example.com/draft")
             XCTAssertTrue(coordinator.state.isCurrentRequestDirty)
@@ -221,6 +221,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         let hidden = InMemoryHiddenNewDraftRepository()
         let summaries = InMemoryExecutionSummaryRepository()
         let selection = InMemorySessionSelectionRepository()
+        let variables = InMemoryVariableRepository()
         try await selection.saveSelection(
             SessionSelection(
                 selectedSavedRequestID: persisted.id,
@@ -228,14 +229,15 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
                 updatedAt: timestamp
             )
         )
-        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries)
+        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries, variables: variables)
         let dependencies = RequestLibraryDependencies(
             savedRequests: saved,
             drafts: drafts,
             hiddenDraft: hidden,
             summaries: summaries,
             selection: selection,
-            workspaceFacade: facade
+            workspaceFacade: facade,
+            variables: variables
         )
 
         let coordinator = SessionCoordinator(requestLibrary: dependencies)
@@ -245,6 +247,128 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state.workspaceName, "Persisted")
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/persisted")
+    }
+
+    func testVariableLoadPreservesDuplicateNamesAndSurfacesWarning() async throws {
+        let saved = InMemorySavedRequestRepository()
+        let drafts = InMemoryRequestDraftRepository()
+        let hidden = InMemoryHiddenNewDraftRepository()
+        let summaries = InMemoryExecutionSummaryRepository()
+        let selection = InMemorySessionSelectionRepository()
+        let variables = InMemoryVariableRepository()
+        let older = Variable(
+            name: "host",
+            value: "old.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = Variable(
+            name: "host",
+            value: "new.example.com",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 2),
+            updatedAt: Date(timeIntervalSince1970: 2)
+        )
+        try await variables.saveVariable(older)
+        try await variables.saveVariable(newer)
+        let facade = InMemoryWorkspaceRepositoryFacade(
+            savedRequests: saved,
+            drafts: drafts,
+            summaries: summaries,
+            variables: variables
+        )
+        let coordinator = SessionCoordinator(requestLibrary: RequestLibraryDependencies(
+            savedRequests: saved,
+            drafts: drafts,
+            hiddenDraft: hidden,
+            summaries: summaries,
+            selection: selection,
+            workspaceFacade: facade,
+            variables: variables
+        ))
+
+        await waitUntil { coordinator.state.variables.count == 2 }
+        coordinator.setURL("https://{{host}}")
+
+        XCTAssertEqual(coordinator.state.variables.map(\.id), [older.id, newer.id])
+        XCTAssertEqual(
+            coordinator.state.persistenceWarningMessage,
+            "Duplicate variable names were found in local storage: host. The newest value is used until the duplicate is renamed or deleted."
+        )
+        XCTAssertEqual(
+            coordinator.resolveCurrentRequestForRun().resolvedRequest?.urlString,
+            "https://new.example.com"
+        )
+    }
+
+    func testRequestVariablesMigrateOnSavePersistAndDeleteWithOwner() async throws {
+        let fileURL = makeTemporaryLibraryFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let hiddenDraftID = UUID()
+        let seededRepositories = try FileRequestLibraryRepositories(fileURL: fileURL)
+        try await seededRepositories.saveHiddenDraft(HiddenNewDraft(
+            id: hiddenDraftID,
+            snapshot: EditableRequestSnapshot(name: "Variable owner", request: .empty),
+            nameWasManuallyEdited: true,
+            lastEditedAt: Date()
+        ))
+        try await seededRepositories.saveSelection(SessionSelection(
+            selectedSavedRequestID: nil,
+            selectedContext: .hiddenNewDraft,
+            updatedAt: Date()
+        ))
+
+        let savedRequestID: UUID
+        do {
+            let coordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+            await waitUntil("initial variable library load") { coordinator.hasCompletedInitialLibraryLoad }
+            XCTAssertEqual(coordinator.state.selectedRequestContext, .hiddenNewDraft)
+
+            let requestVariable = try XCTUnwrap(
+                coordinator.createVariable(name: "account_id", value: "42", scope: .request)
+            )
+            let globalVariable = try XCTUnwrap(
+                coordinator.createVariable(name: "api_host", value: "example.com", scope: .global)
+            )
+            XCTAssertEqual(requestVariable.requestID, hiddenDraftID)
+            XCTAssertNil(globalVariable.requestID)
+
+            coordinator.updateWorkspaceName("Variable owner")
+            coordinator.setURL("https://{{api_host}}/accounts/{{account_id}}")
+            coordinator.saveCurrentRequest()
+            await waitUntil("variable owner request save") { coordinator.state.requestListItems.count == 2 }
+            savedRequestID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+            await coordinator.waitForPendingPersistence()
+
+            let migrated = try XCTUnwrap(
+                coordinator.listVariablesForCurrentContext().first { $0.id == requestVariable.id }
+            )
+            XCTAssertEqual(migrated.requestID, savedRequestID)
+        }
+
+        do {
+            let coordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+            await waitUntil("variable reload") { coordinator.state.variables.count == 2 }
+
+            XCTAssertEqual(coordinator.state.variables.map(\.name).sorted(), ["account_id", "api_host"])
+            XCTAssertEqual(
+                coordinator.state.variables.first { $0.name == "account_id" }?.requestID,
+                savedRequestID
+            )
+
+            coordinator.deleteSavedRequest(id: savedRequestID)
+            await waitUntil("saved request deletion") {
+                !coordinator.state.requestListItems.contains { $0.id == savedRequestID }
+            }
+            await coordinator.waitForPendingPersistence()
+            XCTAssertEqual(coordinator.state.variables.map(\.name), ["api_host"])
+        }
+
+        let relaunched = try makeFileBackedCoordinator(fileURL: fileURL)
+        await waitUntil("deleted variable remains absent after reload") { relaunched.state.variables.count == 1 }
+        XCTAssertEqual(relaunched.state.variables.map(\.name), ["api_host"])
+        XCTAssertEqual(relaunched.state.variables.first?.scope, .global)
     }
 
     func testSelectSavedRequestUpdatesSelectedSavedRequestIDInPublishedState() async {
@@ -278,14 +402,16 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         let hidden = InMemoryHiddenNewDraftRepository()
         let summaries = InMemoryExecutionSummaryRepository()
         let selection = InMemorySessionSelectionRepository()
-        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries)
+        let variables = InMemoryVariableRepository()
+        let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries, variables: variables)
         let dependencies = RequestLibraryDependencies(
             savedRequests: saved,
             drafts: drafts,
             hiddenDraft: hidden,
             summaries: summaries,
             selection: selection,
-            workspaceFacade: facade
+            workspaceFacade: facade,
+            variables: variables
         )
         return SessionCoordinator(requestLibrary: dependencies)
     }
@@ -298,7 +424,8 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
             hiddenDraft: repositories,
             summaries: repositories,
             selection: repositories,
-            workspaceFacade: repositories
+            workspaceFacade: repositories,
+            variables: repositories
         )
         return SessionCoordinator(requestLibrary: dependencies)
     }
@@ -312,6 +439,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
     }
 
     private func waitUntil(
+        _ description: String = "condition",
         timeout: TimeInterval = 2.0,
         condition: @escaping () -> Bool
     ) async {
@@ -323,7 +451,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
             await Task.yield()
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTAssertTrue(condition(), "Condition timed out after \(timeout) seconds.")
+        XCTAssertTrue(condition(), "Timed out waiting for \(description) after \(timeout) seconds.")
     }
 }
 

@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 import Foundation
 
@@ -54,11 +55,12 @@ final class URLBarImportUITests: XCTestCase {
             into: urlField
         )
 
+        let didImportMultilineCurl = waitUntil(timeout: 3) {
+            urlField.value as? String == "http://localhost:9999/put"
+        }
         XCTAssertTrue(
-            waitUntil(timeout: 3) {
-                urlField.value as? String == "http://localhost:9999/put"
-            },
-            "A real paste of a multiline cURL should show the parsed URL, not the literal cURL command."
+            didImportMultilineCurl,
+            "A real paste of a multiline cURL should show the parsed URL, not \(String(describing: urlField.value))."
         )
         XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled)
     }
@@ -326,10 +328,12 @@ final class URLBarImportUITests: XCTestCase {
 
     private func paste(_ text: String, into element: XCUIElement) {
         XCTAssertTrue(element.waitForExistence(timeout: 2), "Expected URL field to exist before typing.")
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString(text, forType: .string), "Expected to prepare the cURL clipboard payload.")
         element.click()
         element.typeKey("a", modifierFlags: .command)
-        element.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
-        element.typeText(text)
+        element.typeKey("v", modifierFlags: .command)
     }
 
     private func openMenuBarExtra(app: XCUIApplication) {

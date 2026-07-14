@@ -8,6 +8,7 @@ struct RequestLibraryDependencies {
     let summaries: ExecutionSummaryRepository
     let selection: SessionSelectionRepository
     let workspaceFacade: WorkspaceRepositoryFacade
+    let variables: VariableRepository
 }
 
 @MainActor
@@ -26,6 +27,7 @@ final class SessionCoordinator: ObservableObject {
     private var savedRequestsByID: [UUID: SavedRequest] = [:]
     private var draftsByRequestID: [UUID: RequestDraft] = [:]
     private var summariesByRequestID: [UUID: ExecutionSummary] = [:]
+    private var variablesByID: [UUID: Variable] = [:]
     private var executionStatesByRequestID: [UUID: RequestExecutionState] = [:]
     private var hiddenNewDraft: HiddenNewDraft?
     private var selectedContext: SelectionContext = .hiddenNewDraft
@@ -43,6 +45,10 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var globalInlineMessage: InlineMessage?
 
     @Published private(set) var state: SessionState = .initial
+
+    var hasCompletedInitialLibraryLoad: Bool {
+        requestLibrary == nil || didCompleteInitialLibraryLoad
+    }
 
     init(
         initialState: SessionState = .initial,
@@ -211,7 +217,7 @@ final class SessionCoordinator: ObservableObject {
         do {
             let importResult = try curlImporter.parse(trimmed)
 
-            if state.workspaceRequest.isEffectivelyEmpty {
+            if state.workspaceRequest.isEffectivelyEmpty || state.workspaceRequest.isURLOnlyDraft(matching: text) {
                 applyImportedResult(importResult)
             } else {
                 state.replaceConfirmationState = ReplaceConfirmationState(
@@ -246,7 +252,15 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func runCurrentRequest() {
-        startExecution(using: state.workspaceRequest)
+        let result = resolveCurrentRequestForRun()
+        guard let resolvedRequest = result.resolvedRequest else {
+            state.executionState = .failed
+            setInlineError(result.errorMessage ?? "The request is not runnable yet.")
+            globalExecutionState = .failed
+            globalInlineMessage = InlineMessage(severity: .error, text: result.errorMessage ?? "The request is not runnable yet.")
+            return
+        }
+        startExecution(using: resolvedRequest)
     }
 
     func rerunLastRequest() {
@@ -256,7 +270,112 @@ final class SessionCoordinator: ObservableObject {
             return
         }
         selectSavedRequest(id: requestID)
-        startExecution(using: state.workspaceRequest)
+        runCurrentRequest()
+    }
+
+    func presentVariablesModal() {
+        state.isVariablesModalPresented = true
+    }
+
+    func dismissVariablesModal() {
+        state.isVariablesModalPresented = false
+    }
+
+    func listVariablesForCurrentContext() -> [Variable] {
+        let ownerID = currentVariableOwnerID()
+        return variablesByID.values
+            .filter { variable in
+                variable.scope == .global || (variable.scope == .request && variable.requestID == ownerID)
+            }
+            .sorted {
+                if $0.createdAt == $1.createdAt {
+                    return $0.id.uuidString < $1.id.uuidString
+                }
+                return $0.createdAt < $1.createdAt
+            }
+    }
+
+    @discardableResult
+    func createVariable(name: String, value: String, scope: VariableScope) -> Variable? {
+        let normalizedName = Variable.normalizedNameForStorage(name)
+        guard Variable.isValidName(normalizedName), !variablesByID.values.contains(where: { $0.name == normalizedName }) else {
+            return nil
+        }
+        let requestID: UUID?
+        if scope == .request {
+            requestID = ensureCurrentVariableOwnerID()
+        } else {
+            requestID = nil
+        }
+        guard scope == .global || requestID != nil else {
+            return nil
+        }
+        let now = Date()
+        let variable = Variable(
+            name: normalizedName,
+            value: value,
+            scope: scope,
+            requestID: requestID,
+            createdAt: now,
+            updatedAt: now
+        )
+        variablesByID[variable.id] = variable
+        clearInlineMessage()
+        refreshVariablesPresentation()
+        persistVariable(variable)
+        return variable
+    }
+
+    @discardableResult
+    func updateVariable(id: UUID, name: String, value: String) -> Variable? {
+        guard var variable = variablesByID[id] else { return nil }
+        let normalizedName = Variable.normalizedNameForStorage(name)
+        guard Variable.isValidName(normalizedName) else { return nil }
+        guard !variablesByID.values.contains(where: { $0.id != id && $0.name == normalizedName }) else {
+            return nil
+        }
+        variable.name = normalizedName
+        variable.value = value
+        variable.updatedAt = Date()
+        variablesByID[id] = variable
+        clearInlineMessage()
+        refreshVariablesPresentation()
+        persistVariable(variable)
+        return variable
+    }
+
+    @discardableResult
+    func updateVariableValue(id: UUID, value: String) -> Variable? {
+        guard let variable = variablesByID[id] else { return nil }
+        return updateVariable(id: id, name: variable.name, value: value)
+    }
+
+    func deleteVariable(id: UUID) {
+        variablesByID[id] = nil
+        clearInlineMessage()
+        refreshVariablesPresentation()
+        guard let requestLibrary else { return }
+        enqueuePersistenceTask(errorPrefix: "Failed to delete variable") {
+            try await requestLibrary.variables.deleteVariable(id: id)
+        }
+    }
+
+    func resolveCurrentRequestForRun() -> VariableResolutionResult {
+        VariableResolver.resolve(state.workspaceRequest, variables: listVariablesForCurrentContext())
+    }
+
+    var currentRequestIssueMessage: String? {
+        if let inlineMessage = state.inlineMessage {
+            return inlineMessage.text
+        }
+        guard !state.workspaceRequest.containsVariableTemplateOpening else {
+            return nil
+        }
+        return state.workspaceRequest.lightweightValidationMessage
+    }
+
+    var currentRequestIssueSeverity: InlineMessageSeverity {
+        state.inlineMessage?.severity ?? .error
     }
 
     func updateWorkspaceName(_ name: String) {
@@ -339,6 +458,7 @@ final class SessionCoordinator: ObservableObject {
             }
             refreshRequestListPresentation()
         case .hiddenNewDraft:
+            let hiddenDraftID = hiddenNewDraft?.id
             let newSaved = SavedRequest(
                 id: UUID(),
                 name: snapshot.name,
@@ -357,6 +477,9 @@ final class SessionCoordinator: ObservableObject {
             enqueuePersistenceTask(errorPrefix: "Failed to save request") {
                 try await requestLibrary.savedRequests.upsert(newSaved)
                 try await requestLibrary.hiddenDraft.deleteHiddenDraft()
+                if let hiddenDraftID {
+                    try await requestLibrary.variables.migrateVariables(from: hiddenDraftID, to: newSaved.id)
+                }
                 if let pending = pendingSummary {
                     var attached = pending
                     attached.requestID = newSaved.id
@@ -366,6 +489,9 @@ final class SessionCoordinator: ObservableObject {
                         self.draftRunSummaryForHiddenContext = nil
                     }
                 }
+            }
+            if let hiddenDraftID {
+                migrateCachedVariables(from: hiddenDraftID, to: newSaved.id)
             }
             refreshRequestListPresentation()
             persistSelectionState()
@@ -402,6 +528,10 @@ final class SessionCoordinator: ObservableObject {
         enqueuePersistenceTask(errorPrefix: "Failed to delete request") {
             try await requestLibrary.workspaceFacade.deleteSavedRequestAndRelatedState(id: id)
         }
+        variablesByID = variablesByID.filter { _, variable in
+            !(variable.scope == .request && variable.requestID == id)
+        }
+        refreshVariablesPresentation()
         refreshRequestListPresentation()
     }
 
@@ -669,6 +799,7 @@ final class SessionCoordinator: ObservableObject {
             var loadedDrafts: [UUID: RequestDraft] = [:]
             var loadedSummaries: [UUID: ExecutionSummary] = [:]
             var loadedExecutionStates: [UUID: RequestExecutionState] = [:]
+            let loadedVariables = try await requestLibrary.variables.listVariables()
             for request in savedList {
                 if let draft = try await requestLibrary.drafts.draft(for: request.id) {
                     loadedDrafts[request.id] = draft
@@ -746,6 +877,20 @@ final class SessionCoordinator: ObservableObject {
                 self.savedRequestsByID = Dictionary(uniqueKeysWithValues: savedList.map { ($0.id, $0) })
                 self.draftsByRequestID = loadedDrafts
                 self.summariesByRequestID = loadedSummaries
+                self.variablesByID = loadedVariables.reduce(into: [:]) { result, variable in
+                    guard let existing = result[variable.id] else {
+                        result[variable.id] = variable
+                        return
+                    }
+                    if variable.updatedAt > existing.updatedAt {
+                        result[variable.id] = variable
+                    }
+                }
+                self.refreshVariablesPresentation()
+                let duplicateNames = VariableLookup(variables: loadedVariables).duplicateNames
+                if !duplicateNames.isEmpty {
+                    self.state.persistenceWarningMessage = Self.duplicateVariableWarning(names: duplicateNames)
+                }
                 self.executionStatesByRequestID = loadedExecutionStates
                 self.hiddenNewDraft = hiddenDraft
                 self.restoreSelection(selection)
@@ -781,6 +926,13 @@ final class SessionCoordinator: ObservableObject {
 
     private func restoreSelection(_ persisted: SessionSelection?) {
         state.isLibraryCollapsed = persisted?.isLibraryCollapsed ?? state.isLibraryCollapsed
+
+        if persisted?.selectedContext == .hiddenNewDraft, hiddenNewDraft != nil {
+            selectedContext = .hiddenNewDraft
+            selectedSavedRequestID = nil
+            applySelectedRequestSnapshot()
+            return
+        }
 
         if !savedRequestsByID.isEmpty {
             if let persisted,
@@ -882,6 +1034,53 @@ final class SessionCoordinator: ObservableObject {
         } catch {
             setInlineError("Failed to persist selection: \(error.localizedDescription)")
         }
+    }
+
+    private func currentVariableOwnerID() -> UUID? {
+        switch selectedContext {
+        case .saved:
+            return selectedSavedRequestID
+        case .hiddenNewDraft:
+            return hiddenNewDraft?.id
+        }
+    }
+
+    private func ensureCurrentVariableOwnerID() -> UUID? {
+        if let current = currentVariableOwnerID() {
+            return current
+        }
+        selectHiddenNewDraft(createIfMissing: true)
+        return hiddenNewDraft?.id
+    }
+
+    private func persistVariable(_ variable: Variable) {
+        guard let requestLibrary else { return }
+        enqueuePersistenceTask(errorPrefix: "Failed to persist variable") {
+            try await requestLibrary.variables.saveVariable(variable)
+        }
+    }
+
+    private func migrateCachedVariables(from oldRequestID: UUID, to newRequestID: UUID) {
+        for (id, variable) in variablesByID where variable.scope == .request && variable.requestID == oldRequestID {
+            var migrated = variable
+            migrated.requestID = newRequestID
+            variablesByID[id] = migrated
+        }
+        refreshVariablesPresentation()
+    }
+
+    private func refreshVariablesPresentation() {
+        state.variables = variablesByID.values.sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.createdAt < $1.createdAt
+        }
+    }
+
+    private static func duplicateVariableWarning(names: [String]) -> String {
+        let listedNames = names.joined(separator: ", ")
+        return "Duplicate variable names were found in local storage: \(listedNames). The newest value is used until the duplicate is renamed or deleted."
     }
 
     private func persistDraftStateAfterEdit() {
@@ -1057,11 +1256,9 @@ final class SessionCoordinator: ObservableObject {
         
         let task = Task { [weak self] in
             _ = await previousChain.result
-            
+
             defer {
-                Task { @MainActor in
-                    self?.pendingPersistenceTasks[taskID] = nil
-                }
+                self?.pendingPersistenceTasks[taskID] = nil
             }
 
             do {

@@ -6,9 +6,36 @@ struct FileRequestLibraryContainer: Codable, Equatable {
     var hiddenNewDraft: HiddenNewDraft?
     var summaries: [ExecutionSummary]
     var sessionSelection: SessionSelection?
+    var variables: [Variable]
+
+    init(
+        savedRequests: [SavedRequest],
+        drafts: [RequestDraft],
+        hiddenNewDraft: HiddenNewDraft?,
+        summaries: [ExecutionSummary],
+        sessionSelection: SessionSelection?,
+        variables: [Variable] = []
+    ) {
+        self.savedRequests = savedRequests
+        self.drafts = drafts
+        self.hiddenNewDraft = hiddenNewDraft
+        self.summaries = summaries
+        self.sessionSelection = sessionSelection
+        self.variables = variables
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.savedRequests = try container.decodeIfPresent([SavedRequest].self, forKey: .savedRequests) ?? []
+        self.drafts = try container.decodeIfPresent([RequestDraft].self, forKey: .drafts) ?? []
+        self.hiddenNewDraft = try container.decodeIfPresent(HiddenNewDraft.self, forKey: .hiddenNewDraft)
+        self.summaries = try container.decodeIfPresent([ExecutionSummary].self, forKey: .summaries) ?? []
+        self.sessionSelection = try container.decodeIfPresent(SessionSelection.self, forKey: .sessionSelection)
+        self.variables = try container.decodeIfPresent([Variable].self, forKey: .variables) ?? []
+    }
 }
 
-actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftRepository, HiddenNewDraftRepository, ExecutionSummaryRepository, SessionSelectionRepository, WorkspaceRepositoryFacade {
+actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftRepository, HiddenNewDraftRepository, ExecutionSummaryRepository, SessionSelectionRepository, WorkspaceRepositoryFacade, VariableRepository {
     private let fileURL: URL
     private var container: FileRequestLibraryContainer
     private let encoder: JSONEncoder
@@ -96,6 +123,16 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
             }
         }
 
+        for variable in legacy.variables {
+            if let index = merged.variables.firstIndex(where: { $0.id == variable.id }) {
+                if variable.updatedAt > merged.variables[index].updatedAt {
+                    merged.variables[index] = variable
+                }
+            } else {
+                merged.variables.append(variable)
+            }
+        }
+
         if let legacySelection = legacy.sessionSelection {
             if let currentSelection = merged.sessionSelection {
                 if legacySelection.updatedAt > currentSelection.updatedAt {
@@ -119,6 +156,12 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
         }
         merged.drafts.sort { $0.requestID.uuidString < $1.requestID.uuidString }
         merged.summaries.sort { $0.requestID.uuidString < $1.requestID.uuidString }
+        merged.variables.sort {
+            if $0.createdAt == $1.createdAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.createdAt < $1.createdAt
+        }
 
         return merged
     }
@@ -226,6 +269,7 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
         container.savedRequests.removeAll { $0.id == id }
         container.drafts.removeAll { $0.requestID == id }
         container.summaries.removeAll { $0.requestID == id }
+        container.variables.removeAll { $0.scope == .request && $0.requestID == id }
         if container.sessionSelection?.selectedSavedRequestID == id {
             container.sessionSelection = nil
         }
@@ -297,6 +341,41 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
 
     func deleteSavedRequestAndRelatedState(id: UUID) async throws {
         try await delete(id: id)
+    }
+
+    func listVariables() async throws -> [Variable] {
+        container.variables.sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.createdAt < $1.createdAt
+        }
+    }
+
+    func saveVariable(_ variable: Variable) async throws {
+        if let index = container.variables.firstIndex(where: { $0.id == variable.id }) {
+            container.variables[index] = variable
+        } else {
+            container.variables.append(variable)
+        }
+        try persist()
+    }
+
+    func deleteVariable(id: UUID) async throws {
+        container.variables.removeAll { $0.id == id }
+        try persist()
+    }
+
+    func deleteVariables(forRequestID requestID: UUID) async throws {
+        container.variables.removeAll { $0.scope == .request && $0.requestID == requestID }
+        try persist()
+    }
+
+    func migrateVariables(from oldRequestID: UUID, to newRequestID: UUID) async throws {
+        for index in container.variables.indices where container.variables[index].scope == .request && container.variables[index].requestID == oldRequestID {
+            container.variables[index].requestID = newRequestID
+        }
+        try persist()
     }
 }
 

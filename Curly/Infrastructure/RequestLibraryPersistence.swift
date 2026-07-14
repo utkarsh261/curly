@@ -34,3 +34,11 @@ protocol SessionSelectionRepository: Sendable {
 protocol WorkspaceRepositoryFacade: Sendable {
     func deleteSavedRequestAndRelatedState(id: UUID) async throws
 }
+
+protocol VariableRepository: Sendable {
+    func listVariables() async throws -> [Variable]
+    func saveVariable(_ variable: Variable) async throws
+    func deleteVariable(id: UUID) async throws
+    func deleteVariables(forRequestID requestID: UUID) async throws
+    func migrateVariables(from oldRequestID: UUID, to newRequestID: UUID) async throws
+}

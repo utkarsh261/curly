@@ -89,14 +89,51 @@ actor InMemorySessionSelectionRepository: SessionSelectionRepository {
     }
 }
 
+actor InMemoryVariableRepository: VariableRepository {
+    private var variablesByID: [UUID: Variable] = [:]
+
+    func listVariables() async throws -> [Variable] {
+        variablesByID.values.sorted {
+            if $0.createdAt == $1.createdAt {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return $0.createdAt < $1.createdAt
+        }
+    }
+
+    func saveVariable(_ variable: Variable) async throws {
+        variablesByID[variable.id] = variable
+    }
+
+    func deleteVariable(id: UUID) async throws {
+        variablesByID[id] = nil
+    }
+
+    func deleteVariables(forRequestID requestID: UUID) async throws {
+        variablesByID = variablesByID.filter { _, variable in
+            !(variable.scope == .request && variable.requestID == requestID)
+        }
+    }
+
+    func migrateVariables(from oldRequestID: UUID, to newRequestID: UUID) async throws {
+        for (id, variable) in variablesByID where variable.scope == .request && variable.requestID == oldRequestID {
+            var migrated = variable
+            migrated.requestID = newRequestID
+            variablesByID[id] = migrated
+        }
+    }
+}
+
 struct InMemoryWorkspaceRepositoryFacade: WorkspaceRepositoryFacade {
     let savedRequests: SavedRequestRepository
     let drafts: RequestDraftRepository
     let summaries: ExecutionSummaryRepository
+    var variables: VariableRepository? = nil
 
     func deleteSavedRequestAndRelatedState(id: UUID) async throws {
         try await savedRequests.delete(id: id)
         try await drafts.deleteDraft(for: id)
         try await summaries.deleteSummary(for: id)
+        try await variables?.deleteVariables(forRequestID: id)
     }
 }

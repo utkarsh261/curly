@@ -65,6 +65,7 @@ struct CurlyApp: App {
         didApplyUITestURLBarInput = true
         coordinator.handleURLBarPaste(arguments[index + 1])
     }
+
 #endif
 }
 
@@ -87,15 +88,22 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 private extension CurlyApp {
     static func makeCoordinator() -> SessionCoordinator {
         let arguments = ProcessInfo.processInfo.arguments
+        let coordinator: SessionCoordinator
 #if DEBUG
         if arguments.contains("--ui-test-stub-executor") {
-            return SessionCoordinator(
+            coordinator = SessionCoordinator(
                 requestExecutor: UITestEchoRequestExecutor(),
                 requestLibrary: makeRequestLibraryDependencies(arguments: arguments)
             )
+        } else {
+            coordinator = SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
         }
+
+        return coordinator
+#else
+        coordinator = SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
+        return coordinator
 #endif
-        return SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
     }
 
     static func makeRequestLibraryDependencies(arguments: [String]) -> RequestLibraryDependencies? {
@@ -123,7 +131,8 @@ private extension CurlyApp {
                 hiddenDraft: repositories,
                 summaries: repositories,
                 selection: repositories,
-                workspaceFacade: repositories
+                workspaceFacade: repositories,
+                variables: repositories
             )
         } catch {
 #if DEBUG
@@ -248,6 +257,14 @@ struct WorkspaceCommands: Commands {
     @ObservedObject var coordinator: SessionCoordinator
 
     var body: some Commands {
+        CommandGroup(after: .textEditing) {
+            Button("Manage Variables…") {
+                coordinator.presentVariablesModal()
+            }
+            .keyboardShortcut("v", modifiers: [.command, .option])
+            .accessibilityIdentifier("manage-variables-command")
+        }
+
         CommandMenu("Workspace") {
             Button("New Workspace") {
                 coordinator.createOrFocusHiddenNewDraft()
