@@ -9,6 +9,13 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .resolved), .controlAccentColor)
     }
 
+    func testVariablesModalHeightFitsContentWithinCompactBounds() {
+        XCTAssertEqual(VariableModalMetrics.height(contentHeight: 280, availableHeight: 900), 360)
+        XCTAssertEqual(VariableModalMetrics.height(contentHeight: 486, availableHeight: 900), 486)
+        XCTAssertEqual(VariableModalMetrics.height(contentHeight: 900, availableHeight: 900), 600)
+        XCTAssertEqual(VariableModalMetrics.height(contentHeight: 540, availableHeight: 480), 480)
+    }
+
     func testRequiresHTTPOrHTTPSAbsoluteURL() {
         XCTAssertFalse(Request(method: .get, urlString: "foo", headers: [], body: .none).isMinimallyValid)
         XCTAssertFalse(Request(method: .get, urlString: "localhost:3000", headers: [], body: .none).isMinimallyValid)

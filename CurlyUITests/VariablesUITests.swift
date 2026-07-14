@@ -115,6 +115,7 @@ final class VariablesUITests: XCTestCase {
         XCTAssertTrue(draftNameField.waitForExistence(timeout: 2))
         XCTAssertTrue(draftValueField.waitForExistence(timeout: 2))
 
+        draftNameField.click()
         draftNameField.typeText("api_host")
         draftValueField.click()
         draftValueField.typeText("https://example.com")
@@ -167,6 +168,70 @@ final class VariablesUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Add Request Variable"].firstMatch.isEnabled)
     }
 
+    func testVariablesModalUsesCompactAlignedTableLayout() throws {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+
+        let title = app.staticTexts["Variables"].firstMatch
+        let subtitle = app.staticTexts["Changes save automatically."].firstMatch
+        let requestAdd = app.buttons["Add Request Variable"].firstMatch
+        let globalAdd = app.buttons["Add Global Variable"].firstMatch
+        let emptyGlobal = app.staticTexts["No global variables"].firstMatch
+        XCTAssertTrue(title.exists)
+        XCTAssertTrue(subtitle.exists)
+        XCTAssertTrue(requestAdd.exists)
+        XCTAssertTrue(globalAdd.exists)
+        XCTAssertTrue(emptyGlobal.exists)
+
+        XCTAssertEqual(requestAdd.frame.maxX, globalAdd.frame.maxX, accuracy: 2)
+        XCTAssertLessThan(emptyGlobal.frame.maxY - title.frame.minY, 360)
+
+        requestAdd.click()
+        let nameField = variableFields(named: "variable-name-field-", in: app).firstMatch
+        let valueField = variableFields(named: "variable-value-field-", in: app).firstMatch
+        let deleteButton = app.buttons
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "variable-delete-button-"))
+            .firstMatch
+        XCTAssertTrue(nameField.waitForExistence(timeout: 2))
+        XCTAssertTrue(valueField.waitForExistence(timeout: 2))
+        XCTAssertTrue(deleteButton.waitForExistence(timeout: 2))
+
+        XCTAssertEqual(nameField.frame.minY, valueField.frame.minY, accuracy: 1)
+        XCTAssertLessThanOrEqual(nameField.frame.height, 24)
+        XCTAssertGreaterThan(valueField.frame.width, nameField.frame.width * 1.5)
+        XCTAssertLessThan(deleteButton.frame.width, 44)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Variables compact table"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    func testVariablesModalExpandsToShowTypicalFiveRowSetWithoutClipping() throws {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "auth", value: "some_auth", addButton: "Add Request Variable", in: app)
+        createVariable(name: "global_var", value: "global_value", addButton: "Add Global Variable", in: app)
+        createVariable(name: "port", value: "9999", addButton: "Add Global Variable", in: app)
+        createVariable(name: "localhost", value: "localhost", addButton: "Add Global Variable", in: app)
+        createVariable(name: "version", value: "v1", addButton: "Add Global Variable", in: app)
+
+        let lastValueField = app.textFields.matching(NSPredicate(format: "value == %@", "v1")).firstMatch
+        let modalScrollView = app.scrollViews["variables-modal-overlay"].firstMatch
+        XCTAssertTrue(lastValueField.waitForExistence(timeout: 2))
+        XCTAssertTrue(modalScrollView.waitForExistence(timeout: 2))
+        XCTAssertLessThanOrEqual(lastValueField.frame.maxY, modalScrollView.frame.maxY - 8)
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "Variables five row table"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func launchWithStubExecutor() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-mode", "--ui-test-stub-executor"]
@@ -187,6 +252,36 @@ final class VariablesUITests: XCTestCase {
 
     private func variableFields(named prefix: String, in app: XCUIApplication) -> XCUIElementQuery {
         app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+    }
+
+    private func createVariable(name: String, value: String, addButton: String, in app: XCUIApplication) {
+        let button = app.buttons[addButton].firstMatch
+        XCTAssertTrue(button.waitForExistence(timeout: 2))
+        let nameFields = variableFields(named: "variable-name-field-", in: app)
+        let existingIdentifiers = Set(nameFields.allElementsBoundByIndex.map(\.identifier))
+        button.click()
+
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            nameFields.allElementsBoundByIndex.contains { !existingIdentifiers.contains($0.identifier) }
+        })
+        guard let draftNameField = nameFields.allElementsBoundByIndex.first(where: {
+            !existingIdentifiers.contains($0.identifier)
+        }) else {
+            XCTFail("Expected a newly inserted variable name field.")
+            return
+        }
+        let valueIdentifier = draftNameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: "variable-value-field-"
+        )
+        let draftValueField = app.textFields[valueIdentifier].firstMatch
+        XCTAssertTrue(draftValueField.waitForExistence(timeout: 2))
+        draftNameField.click()
+        draftNameField.typeText(name)
+        draftValueField.click()
+        draftValueField.typeText(value)
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertTrue(app.textFields.matching(NSPredicate(format: "value == %@", name)).firstMatch.waitForExistence(timeout: 2))
     }
 
     private func replaceText(_ text: String, in element: XCUIElement) {

@@ -170,18 +170,20 @@ struct WorkspaceRootView: View {
     }
 
     private var variablesModalOverlay: some View {
-        ZStack {
-            Color.black.opacity(0.24)
-                .ignoresSafeArea()
-                .accessibilityIdentifier("variables-modal-backdrop")
-                .onTapGesture {
-                    coordinator.dismissVariablesModal()
-                }
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.24)
+                    .ignoresSafeArea()
+                    .accessibilityIdentifier("variables-modal-backdrop")
+                    .onTapGesture {
+                        coordinator.dismissVariablesModal()
+                    }
 
-            VariablesModalView()
-                .environmentObject(coordinator)
-                .frame(width: 760, height: 520)
-                .transition(.scale(scale: 0.98).combined(with: .opacity))
+                VariablesModalView(maximumHeight: geometry.size.height - 48)
+                    .environmentObject(coordinator)
+                    .frame(width: 780)
+                    .transition(.scale(scale: 0.98).combined(with: .opacity))
+            }
         }
         .accessibilityIdentifier("variables-modal-overlay")
     }
@@ -1088,59 +1090,121 @@ private struct RequestEditorAccordion: View {
     }
 }
 
+private enum VariableTableLayout {
+    static let nameWidth: CGFloat = 220
+    static let actionWidth: CGFloat = 36
+    static let columnSpacing: CGFloat = 12
+    static let rowHeight: CGFloat = 48
+}
+
+enum VariableModalMetrics {
+    static let minimumHeight: CGFloat = 360
+    static let maximumHeight: CGFloat = 600
+
+    static func height(contentHeight: CGFloat, availableHeight: CGFloat) -> CGFloat {
+        let availableMaximum = min(maximumHeight, max(0, availableHeight))
+        let desiredHeight = max(minimumHeight, contentHeight)
+        return min(availableMaximum, desiredHeight)
+    }
+}
+
+private struct VariablesModalContentHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct VariablesModalView: View {
     @EnvironmentObject private var coordinator: SessionCoordinator
+    let maximumHeight: CGFloat
     @State private var requestDraftID: UUID?
     @State private var globalDraftID: UUID?
+    @State private var measuredContentHeight: CGFloat = VariableModalMetrics.minimumHeight
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("Variables")
-                    .font(.title3.weight(.semibold))
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Variables")
+                        .font(.title2.weight(.semibold))
+                    Text("Changes save automatically.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textMuted)
+                }
+
                 Spacer()
+
                 Button {
                     coordinator.dismissVariablesModal()
                 } label: {
                     Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color.surfaceInset))
                 }
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("variables-modal-close-button")
             }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 18)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
-                    VariableSectionView(
-                        title: "Request",
-                        emptyMessage: "No request variables yet. Add one for this request.",
-                        variables: requestVariables,
-                        draftID: $requestDraftID,
-                        scope: .request
-                    )
-                    .environmentObject(coordinator)
+            Divider()
 
-                    VariableSectionView(
-                        title: "Global",
-                        emptyMessage: "No global variables yet. Add one for reuse across requests.",
-                        variables: globalVariables,
-                        draftID: $globalDraftID,
-                        scope: .global
-                    )
-                    .environmentObject(coordinator)
+            ScrollViewReader { scrollProxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        VariableSectionView(
+                            title: "Request",
+                            emptyMessage: "No request variables",
+                            variables: requestVariables,
+                            draftID: $requestDraftID,
+                            scope: .request
+                        )
+                        .environmentObject(coordinator)
+
+                        VariableSectionView(
+                            title: "Global",
+                            emptyMessage: "No global variables",
+                            variables: globalVariables,
+                            draftID: $globalDraftID,
+                            scope: .global
+                        )
+                        .environmentObject(coordinator)
+                    }
+                    .padding(20)
+                    .background {
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: VariablesModalContentHeightPreferenceKey.self,
+                                value: geometry.size.height
+                            )
+                        }
+                    }
                 }
-                .padding(.trailing, 4)
+                .onChange(of: requestDraftID) { _, draftID in
+                    scrollToDraft(draftID, using: scrollProxy)
+                }
+                .onChange(of: globalDraftID) { _, draftID in
+                    scrollToDraft(draftID, using: scrollProxy)
+                }
             }
         }
-        .padding(22)
+        .frame(height: modalHeight)
+        .onPreferenceChange(VariablesModalContentHeightPreferenceKey.self) { contentHeight in
+            measuredContentHeight = contentHeight + 86
+        }
         .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color.surfaceRaised)
-                .shadow(color: .black.opacity(0.28), radius: 28, y: 12)
+                .shadow(color: .black.opacity(0.24), radius: 24, y: 10)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.borderSubtle, lineWidth: 1)
         )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var requestVariables: [Variable] {
@@ -1149,6 +1213,17 @@ private struct VariablesModalView: View {
 
     private var globalVariables: [Variable] {
         coordinator.listVariablesForCurrentContext().filter { $0.scope == .global }
+    }
+
+    private var modalHeight: CGFloat {
+        VariableModalMetrics.height(contentHeight: measuredContentHeight, availableHeight: maximumHeight)
+    }
+
+    private func scrollToDraft(_ draftID: UUID?, using proxy: ScrollViewProxy) {
+        guard let draftID else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            proxy.scrollTo(draftID, anchor: .center)
+        }
     }
 }
 
@@ -1161,15 +1236,21 @@ private struct VariableSectionView: View {
     let scope: VariableScope
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
                 Text(title)
-                    .font(.headline.weight(.semibold))
+                    .font(.headline)
+
+                Text("\(variables.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.textMuted)
+
                 Spacer()
+
                 Button {
                     draftID = UUID()
                 } label: {
-                    Image(systemName: "plus")
+                    Label("Add Variable", systemImage: "plus")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -1178,38 +1259,69 @@ private struct VariableSectionView: View {
                 .disabled(draftID != nil)
             }
 
-            HStack(spacing: 10) {
-                Text("Name")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Value")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Text("Delete")
-                    .frame(width: 48, alignment: .center)
-            }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(Color.textMuted)
-            .padding(.horizontal, 10)
+            VStack(spacing: 0) {
+                variableColumnHeader
 
-            if variables.isEmpty && draftID == nil {
-                Text(emptyMessage)
+                Divider()
+
+                if variables.isEmpty && draftID == nil {
+                    HStack(spacing: 8) {
+                        Image(systemName: "tray")
+                        Text(emptyMessage)
+                    }
                     .font(.caption)
                     .foregroundStyle(Color.textMuted)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-            }
-
-            if let draftID {
-                VariableDraftRowView(id: draftID, scope: scope) {
-                    self.draftID = nil
+                    .frame(maxWidth: .infinity, minHeight: VariableTableLayout.rowHeight, alignment: .center)
                 }
-                .environmentObject(coordinator)
-            }
 
-            ForEach(variables) { variable in
-                VariableEditableRowView(variable: variable)
+                if let draftID {
+                    VariableDraftRowView(id: draftID, scope: scope) {
+                        self.draftID = nil
+                    }
                     .environmentObject(coordinator)
+                    .id(draftID)
+
+                    if !variables.isEmpty {
+                        Divider().padding(.leading, 12)
+                    }
+                }
+
+                ForEach(Array(variables.enumerated()), id: \.element.id) { index, variable in
+                    VariableEditableRowView(variable: variable)
+                        .environmentObject(coordinator)
+
+                    if index < variables.count - 1 {
+                        Divider().padding(.leading, 12)
+                    }
+                }
             }
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.surfaceInset)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.borderSubtle.opacity(0.8), lineWidth: 1)
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
+    }
+
+    private var variableColumnHeader: some View {
+        HStack(spacing: VariableTableLayout.columnSpacing) {
+            Text("Name")
+                .frame(width: VariableTableLayout.nameWidth, alignment: .leading)
+            Text("Value")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Color.clear
+                .frame(width: VariableTableLayout.actionWidth)
+                .accessibilityHidden(true)
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(Color.textMuted)
+        .textCase(.uppercase)
+        .padding(.horizontal, 12)
+        .frame(height: 28)
     }
 }
 
@@ -1231,28 +1343,27 @@ private struct VariableDraftRowView: View {
     var body: some View {
         variableRowShell(validationMessage: validationMessage) {
             TextField("name", text: $name)
-                .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .name)
+                .modifier(VariableFieldStyle(isFocused: focusedField == .name))
+                .frame(width: VariableTableLayout.nameWidth)
                 .accessibilityIdentifier("variable-name-field-\(id.uuidString)")
 
             TextField("value", text: $value)
-                .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .value)
+                .modifier(VariableFieldStyle(isFocused: focusedField == .value))
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("variable-value-field-\(id.uuidString)")
 
-            Button {
-                onFinish()
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red.opacity(0.75))
-            .frame(width: 48)
-            .accessibilityIdentifier("variable-delete-button-\(id.uuidString)")
-            .accessibilityLabel("Discard Variable Draft")
+            VariableDeleteButton(
+                accessibilityIdentifier: "variable-delete-button-\(id.uuidString)",
+                accessibilityLabel: "Discard Variable Draft",
+                action: onFinish
+            )
         }
         .onAppear {
-            focusedField = .name
+            DispatchQueue.main.async {
+                focusedField = .name
+            }
         }
         .onSubmit {
             saveIfPossible()
@@ -1305,25 +1416,23 @@ private struct VariableEditableRowView: View {
     var body: some View {
         variableRowShell(isUsed: isUsed, validationMessage: validationMessage) {
             TextField("name", text: $name)
-                .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .name)
+                .modifier(VariableFieldStyle(isFocused: focusedField == .name))
+                .frame(width: VariableTableLayout.nameWidth)
                 .accessibilityIdentifier("variable-name-field-\(variable.id.uuidString)")
 
             TextField("value", text: $value)
-                .textFieldStyle(.roundedBorder)
                 .focused($focusedField, equals: .value)
+                .modifier(VariableFieldStyle(isFocused: focusedField == .value))
+                .frame(maxWidth: .infinity)
                 .accessibilityIdentifier("variable-value-field-\(variable.id.uuidString)")
 
-            Button {
+            VariableDeleteButton(
+                accessibilityIdentifier: "variable-delete-button-\(variable.id.uuidString)",
+                accessibilityLabel: "Delete \(variable.name)"
+            ) {
                 isDeleteConfirmationPresented = true
-            } label: {
-                Image(systemName: "trash")
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red.opacity(0.75))
-            .frame(width: 48)
-            .accessibilityIdentifier("variable-delete-button-\(variable.id.uuidString)")
-            .accessibilityLabel("Delete \(variable.name)")
         }
         .onSubmit {
             saveIfChanged()
@@ -1373,26 +1482,75 @@ private func variableRowShell<Content: View>(
     @ViewBuilder content: () -> Content
 ) -> some View {
     VStack(alignment: .leading, spacing: 6) {
-        HStack(spacing: 10) {
+        HStack(spacing: VariableTableLayout.columnSpacing) {
             content()
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isUsed ? Color.accent.opacity(0.13) : Color.surfaceInset)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.borderSubtle.opacity(0.65), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, 12)
+        .frame(minHeight: VariableTableLayout.rowHeight)
+        .background(Color.surfaceRaised.opacity(0.34))
+        .overlay(alignment: .leading) {
+            if isUsed {
+                Rectangle()
+                    .fill(Color.accent)
+                    .frame(width: 2)
+                    .padding(.vertical, 8)
+            }
+        }
 
         if let validationMessage {
             Text(validationMessage)
                 .font(.caption)
                 .foregroundStyle(.red)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
                 .accessibilityIdentifier("variable-validation-message")
         }
+    }
+}
+
+private struct VariableFieldStyle: ViewModifier {
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .font(.body)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.surfaceRaised)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(isFocused ? Color.accent : Color.borderSubtle, lineWidth: isFocused ? 1.5 : 1)
+            )
+    }
+}
+
+private struct VariableDeleteButton: View {
+    let accessibilityIdentifier: String
+    let accessibilityLabel: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "trash")
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isHovered ? Color.red.opacity(0.12) : Color.clear)
+                )
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(isHovered ? Color.red : Color.textMuted)
+        .frame(width: VariableTableLayout.actionWidth)
+        .help(accessibilityLabel)
+        .onHover { isHovered = $0 }
+        .accessibilityIdentifier(accessibilityIdentifier)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 
