@@ -1121,6 +1121,7 @@ private struct VariablesModalView: View {
                         .background(Circle().fill(Color.surfaceInset))
                 }
                 .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
                 .accessibilityIdentifier("variables-modal-close-button")
             }
             .padding(.horizontal, 22)
@@ -1687,16 +1688,18 @@ private struct StaleBadge: View {
     let isVisible: Bool
 
     var body: some View {
-        Text("Stale")
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.red)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(Color.red.opacity(isVisible ? 0.12 : 0.0))
-            )
-            .opacity(isVisible ? 1 : 0)
+        if isVisible {
+            Text("Stale")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.red)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(Color.red.opacity(0.12))
+                )
+                .accessibilityIdentifier("stale-response-badge")
+        }
     }
 }
 

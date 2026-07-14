@@ -47,6 +47,40 @@ final class VariablesUITests: XCTestCase {
         )
     }
 
+    func testStaleBadgeTracksVariableChangesAndClearsAfterRerun() throws {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "host", value: "example.com", addButton: "Add Global Variable", in: app)
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText("https://{{host}}/users", in: urlField)
+        triggerRun(app)
+
+        XCTAssertTrue(app.staticTexts["response-body-text"].firstMatch.waitForExistence(timeout: 3))
+        let staleBadge = app.staticTexts["stale-response-badge"].firstMatch
+        XCTAssertFalse(staleBadge.exists)
+
+        openVariablesModal(in: app)
+        let valueField = app.textFields.matching(NSPredicate(format: "value == %@", "example.com")).firstMatch
+        valueField.click()
+        valueField.typeKey("a", modifierFlags: .command)
+        valueField.typeText("staging.example.com")
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "staging.example.com")).firstMatch
+                .waitForExistence(timeout: 2)
+        )
+        app.typeKey(.tab, modifierFlags: [])
+        app.typeKey(.escape, modifierFlags: [])
+
+        XCTAssertTrue(staleBadge.waitForExistence(timeout: 3))
+
+        triggerRun(app)
+        XCTAssertTrue(waitUntil(timeout: 3) { !staleBadge.exists })
+    }
+
     func testBackspaceAtEndOfURLVariableDeletesWholeToken() throws {
         let app = launchWithStubExecutor()
         defer { app.terminate() }

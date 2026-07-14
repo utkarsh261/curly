@@ -80,6 +80,31 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(runButton.isEnabled, "Run should be enabled after entering a valid URL.")
     }
 
+    func testLongURLCanBeHorizontallyScrolledWithMouseWithoutVisibleScrollbar() throws {
+        let longURL = "https://example.com/" + String(repeating: "long-path-segment/", count: 20)
+        let (app, urlField) = launchWithURLBarInput(longURL)
+        defer { app.terminate() }
+
+        urlField.scroll(byDeltaX: -500, deltaY: 0)
+        urlField.typeText("X")
+
+        XCTAssertEqual(
+            urlField.value as? String,
+            "X" + longURL,
+            "Scrolling must keep a caret selection instead of selecting the entire URL."
+        )
+
+        urlField.typeKey("z", modifierFlags: .command)
+        urlField.scroll(byDeltaX: -500, deltaY: 0)
+        urlField.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).click()
+        urlField.typeText("X")
+
+        let editedURL = try XCTUnwrap(urlField.value as? String)
+        let insertionLocation = (editedURL as NSString).range(of: "X").location
+        XCTAssertGreaterThan(insertionLocation, 20, "Mouse scrolling should expose text beyond the URL field's leading edge.")
+        XCTAssertEqual(urlField.descendants(matching: .scrollBar).count, 0)
+    }
+
     func testImportedCurlHeadersAreUsedWhenRunningRequest() throws {
         let (app, _) = launchWithURLBarInput(
             "curl https://api.example.com/users -H 'Accept: application/json' -H 'X-Trace: abc123'",

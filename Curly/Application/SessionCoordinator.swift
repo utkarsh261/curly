@@ -322,6 +322,7 @@ final class SessionCoordinator: ObservableObject {
         variablesByID[variable.id] = variable
         clearInlineMessage()
         refreshVariablesPresentation()
+        markResultStaleIfNeeded()
         persistVariable(variable)
         return variable
     }
@@ -340,6 +341,7 @@ final class SessionCoordinator: ObservableObject {
         variablesByID[id] = variable
         clearInlineMessage()
         refreshVariablesPresentation()
+        markResultStaleIfNeeded()
         persistVariable(variable)
         return variable
     }
@@ -354,6 +356,7 @@ final class SessionCoordinator: ObservableObject {
         variablesByID[id] = nil
         clearInlineMessage()
         refreshVariablesPresentation()
+        markResultStaleIfNeeded()
         guard let requestLibrary else { return }
         enqueuePersistenceTask(errorPrefix: "Failed to delete variable") {
             try await requestLibrary.variables.deleteVariable(id: id)
@@ -642,7 +645,7 @@ final class SessionCoordinator: ObservableObject {
                     if let previousResponseMode, previousResponseMode == .raw || visibleResponseState.body.jsonValue != nil {
                         visibleResponseState.selectedMode = previousResponseMode
                     }
-                    visibleResponseState.isStale = self.state.workspaceRequest != request
+                    visibleResponseState.isStale = self.currentRequestDiffers(from: request)
                     
                     let execState = RequestExecutionState(
                         lastExecutedRequest: LastExecutedRequest(request: request),
@@ -725,8 +728,18 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
-        visibleResponseState.isStale = true
+        guard let lastExecutedRequest = state.lastExecutedRequest?.request else {
+            visibleResponseState.isStale = true
+            state.visibleResponseState = visibleResponseState
+            return
+        }
+
+        visibleResponseState.isStale = currentRequestDiffers(from: lastExecutedRequest)
         state.visibleResponseState = visibleResponseState
+    }
+
+    private func currentRequestDiffers(from executedRequest: Request) -> Bool {
+        resolveCurrentRequestForRun().resolvedRequest != executedRequest
     }
 
     private func applyImportedRequest(_ request: Request) {

@@ -3,6 +3,55 @@ import XCTest
 @testable import Curly
 
 final class RequestValidationTests: XCTestCase {
+    @MainActor
+    func testURLFieldEditorKeepsVariableColorWhenSelectionChanges() throws {
+        let variable = Variable(name: "host", value: "example.com", scope: .global)
+        let text = "https://{{host}}/" + String(repeating: "long-path/", count: 20)
+        let textField = PasteAwareTextField()
+        textField.variables = [variable]
+        let editor = URLTokenFieldEditor()
+        editor.string = text
+        textField.prepareFieldEditor(editor)
+        let tokenRange = try XCTUnwrap(URLTokenEditingPolicy.tokenRanges(in: text).first)
+
+        XCTAssertEqual(editor.textStorage?.attribute(.foregroundColor, at: tokenRange.location, effectiveRange: nil) as? NSColor, .controlAccentColor)
+
+        editor.setSelectedRange(NSRange(location: NSMaxRange(tokenRange) + 1, length: 0))
+
+        XCTAssertEqual(editor.textStorage?.attribute(.foregroundColor, at: tokenRange.location, effectiveRange: nil) as? NSColor, .controlAccentColor)
+    }
+
+    @MainActor
+    func testURLFieldEditorScrollsHorizontallyWithoutChangingTextOrSelection() {
+        let clipView = NSClipView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let editor = URLTokenFieldEditor(frame: NSRect(x: 0, y: 0, width: 1_000, height: 24))
+        editor.string = "https://example.com/" + String(repeating: "long-path/", count: 20)
+        editor.setSelectedRange(NSRange(location: 8, length: 4))
+        clipView.documentView = editor
+
+        editor.scrollHorizontally(deltaX: -120, deltaY: 0, hasPreciseDeltas: true)
+
+        XCTAssertEqual(editor.visibleRect.minX, 120, accuracy: 0.5)
+        XCTAssertEqual(editor.string, "https://example.com/" + String(repeating: "long-path/", count: 20))
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 8, length: 4))
+    }
+
+    @MainActor
+    func testURLFieldEditorMapsMouseWheelToHorizontalMovementAndClampsBounds() {
+        let clipView = NSClipView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let editor = URLTokenFieldEditor(frame: NSRect(x: 0, y: 0, width: 500, height: 24))
+        clipView.documentView = editor
+
+        editor.scrollHorizontally(deltaX: 0, deltaY: -30, hasPreciseDeltas: true)
+        XCTAssertEqual(editor.visibleRect.minX, 30, accuracy: 0.5)
+
+        editor.scrollHorizontally(deltaX: 0, deltaY: -1_000, hasPreciseDeltas: true)
+        XCTAssertEqual(editor.visibleRect.minX, 300, accuracy: 0.5)
+
+        editor.scrollHorizontally(deltaX: 0, deltaY: 1_000, hasPreciseDeltas: true)
+        XCTAssertEqual(editor.visibleRect.minX, 0, accuracy: 0.5)
+    }
+
     func testMissingAndInvalidVariableTokensUseErrorColor() {
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .missing), .systemRed)
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .invalid), .systemRed)

@@ -31,6 +31,7 @@ struct URLInputField: NSViewRepresentable {
     func makeNSView(context: Context) -> PasteAwareTextField {
         let textField = PasteAwareTextField()
         textField.cell = URLTokenTextFieldCell(textCell: "")
+        textField.cell?.isScrollable = true
         textField.delegate = context.coordinator
         textField.variables = variables
         context.coordinator.installTextObserverIfNeeded()
@@ -131,9 +132,8 @@ struct URLInputField: NSViewRepresentable {
                let editor = textField.currentEditor() as? NSTextView {
                 activeTextField = textField
                 textField.needsDisplay = true
-                configureEditor(editor)
+                textField.prepareFieldEditor(editor)
                 editor.delegate = self
-                editor.applyURLTokenAttributes(variables: textField.variables)
                 let adjustedRange = URLTokenEditingPolicy.adjustedSelectionRange(
                     editor.selectedRange(),
                     previousSelection: lastSelectedRange,
@@ -270,19 +270,6 @@ struct URLInputField: NSViewRepresentable {
                 isAdjustingSelection = false
             }
             lastSelectedRange = adjustedRange
-        }
-
-        private func configureEditor(_ editor: NSTextView) {
-            editor.isRichText = false
-            editor.allowsUndo = true
-            editor.allowsImageEditing = false
-            editor.importsGraphics = false
-            editor.font = PasteAwareTextField.baseFont
-            editor.textColor = .labelColor
-            editor.typingAttributes = PasteAwareTextField.baseAttributes
-            editor.insertionPointColor = .labelColor
-            editor.backgroundColor = surfaceRaisedNS
-            editor.drawsBackground = true
         }
 
         private func snapSelectionIfNeeded(in textView: NSTextView) {
@@ -594,14 +581,24 @@ final class PasteAwareTextField: NSTextField {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let editor = currentEditor()
-        let wasEditing = editor != nil && window?.firstResponder === editor
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
-        beginEditingIfNeeded(selectAll: !wasEditing)
-        if let editor = currentEditor() as? NSTextView {
-            editor.applyURLTokenAttributes(variables: variables)
+        beginEditingIfNeeded(selectAll: false)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        if currentEditor() == nil {
+            beginEditingIfNeeded(selectAll: false)
         }
+        guard let editor = currentEditor() as? URLTokenFieldEditor else {
+            super.scrollWheel(with: event)
+            return
+        }
+        editor.scrollHorizontally(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            hasPreciseDeltas: event.hasPreciseScrollingDeltas
+        )
     }
 
     override func accessibilityPerformPress() -> Bool {
@@ -613,16 +610,37 @@ final class PasteAwareTextField: NSTextField {
         guard let window else {
             return
         }
+        let previousSelection = (currentEditor() as? NSTextView)?.selectedRange()
         if currentEditor() == nil || window.firstResponder !== currentEditor() {
             selectText(nil)
         }
         needsDisplay = true
+        guard let editor = currentEditor() as? NSTextView else { return }
+        prepareFieldEditor(editor)
         if selectAll {
-            selectText(nil)
-            if let editor = currentEditor() as? NSTextView {
-                editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
-            }
+            editor.setSelectedRange(NSRange(location: 0, length: (editor.string as NSString).length))
+        } else if let previousSelection {
+            let textLength = (editor.string as NSString).length
+            let location = min(previousSelection.location, textLength)
+            let length = min(previousSelection.length, textLength - location)
+            editor.setSelectedRange(NSRange(location: location, length: length))
+        } else {
+            editor.setSelectedRange(NSRange(location: 0, length: 0))
         }
+    }
+
+    func prepareFieldEditor(_ editor: NSTextView) {
+        editor.isRichText = false
+        editor.allowsUndo = true
+        editor.allowsImageEditing = false
+        editor.importsGraphics = false
+        editor.font = Self.baseFont
+        editor.textColor = .labelColor
+        editor.typingAttributes = Self.baseAttributes
+        editor.insertionPointColor = .labelColor
+        editor.backgroundColor = surfaceRaisedNS
+        editor.drawsBackground = true
+        editor.applyURLTokenAttributes(variables: variables)
     }
 
     func applyTokenAttributes() {
@@ -714,7 +732,25 @@ private final class URLTokenTextFieldCell: NSTextFieldCell {
     }
 }
 
-private final class URLTokenFieldEditor: NSTextView {
+final class URLTokenFieldEditor: NSTextView {
+    override func scrollWheel(with event: NSEvent) {
+        scrollHorizontally(
+            deltaX: event.scrollingDeltaX,
+            deltaY: event.scrollingDeltaY,
+            hasPreciseDeltas: event.hasPreciseScrollingDeltas
+        )
+    }
+
+    func scrollHorizontally(deltaX: CGFloat, deltaY: CGFloat, hasPreciseDeltas: Bool) {
+        let dominantDelta = abs(deltaX) > 0.01 ? deltaX : deltaY
+        guard abs(dominantDelta) > 0.01 else { return }
+
+        let distance = dominantDelta * (hasPreciseDeltas ? 1 : 16)
+        let maximumOriginX = max(0, bounds.width - visibleRect.width)
+        let targetOriginX = min(max(visibleRect.minX - distance, 0), maximumOriginX)
+        scroll(NSPoint(x: targetOriginX, y: visibleRect.minY))
+    }
+
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers == .command,

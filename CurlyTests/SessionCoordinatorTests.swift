@@ -404,6 +404,57 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.lastExecutedRequest?.request.urlString, "https://example.com/users")
     }
 
+    func testVariableBackedResponseBecomesStaleWhenValueChangesAndFreshAfterRerun() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://{{host}}/users")
+        let variable = try! XCTUnwrap(coordinator.createVariable(name: "host", value: "example.com", scope: .global))
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let firstRequest = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: firstRequest,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 100)
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+
+        XCTAssertEqual(firstRequest.urlString, "https://example.com/users")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, false)
+
+        coordinator.updateVariableValue(id: variable.id, value: "staging.example.com")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        let secondRequest = await executor.invocations[1]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: secondRequest,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date(timeIntervalSince1970: 101)
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+
+        XCTAssertEqual(secondRequest.urlString, "https://staging.example.com/users")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, false)
+    }
+
     func testDuplicateRunWhileRunningIsIgnored() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(
