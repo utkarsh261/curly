@@ -3,7 +3,6 @@ import SwiftUI
 
 private enum WorkspaceLayout {
     static let sidebarWidth: CGFloat = 220
-    static let sidebarRevealHitWidth: CGFloat = 12
     static let panePadding: CGFloat = 20
     static let paneTopPadding: CGFloat = 16
 }
@@ -14,11 +13,15 @@ struct WorkspaceRootView: View {
     @FocusState private var isRequestNameFocused: Bool
     @State private var responseFoldedRanges: [NSRange] = []
     @State private var pendingDeleteRequest: RequestListItem?
-    @State private var isLibraryAutoRevealed = false
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             HSplitView {
+                if !coordinator.state.isLibraryCollapsed {
+                    libraryPane
+                        .frame(width: WorkspaceLayout.sidebarWidth)
+                }
+
                 requestPane
                     .frame(minWidth: 360, idealWidth: 420)
 
@@ -26,15 +29,27 @@ struct WorkspaceRootView: View {
                     .frame(minWidth: 420, idealWidth: 680)
             }
 
-            autoRevealingLibraryPane
-
             if coordinator.state.isVariablesModalPresented {
                 variablesModalOverlay
             }
 
         }
-        .frame(minWidth: 980, minHeight: 620)
+        .frame(minWidth: 1_000, minHeight: 620)
         .background(WorkspaceBackdrop())
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        coordinator.toggleLibraryCollapsed()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .help(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
+                .accessibilityLabel(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
+                .accessibilityIdentifier("toggle-library-button")
+            }
+        }
         .confirmationDialog(
             "Replace the current workspace?",
             isPresented: replacementDialogIsPresented,
@@ -264,8 +279,10 @@ struct WorkspaceRootView: View {
     }
 
     private var libraryPane: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             libraryHeader
+
+            Divider()
 
             List {
                 ForEach(coordinator.state.requestListItems) { item in
@@ -277,6 +294,8 @@ struct WorkspaceRootView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(item.name)
+                    .accessibilityValue("\(item.method.rawValue), \(item.urlPreview)")
                     .contextMenu {
                         Button("Revert Draft") {
                             coordinator.revertSavedRequestDraft(id: item.id)
@@ -310,73 +329,30 @@ struct WorkspaceRootView: View {
                 }
             }
         }
-        .padding(10)
-        .padding(.top, WorkspaceLayout.paneTopPadding)
         .background(Color(nsColor: .underPageBackgroundColor))
     }
 
     private var libraryHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Requests")
-                        .font(.headline.weight(.semibold))
-                }
-                Spacer()
-                Button {
-                    isLibraryAutoRevealed = false
-                } label: {
-                    Image(systemName: "sidebar.left")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("Hide request list")
-                .accessibilityIdentifier("toggle-library-button")
+        HStack(alignment: .center, spacing: 8) {
+            Text("Requests")
+                .font(.headline.weight(.semibold))
 
-                Button {
-                    coordinator.createOrFocusHiddenNewDraft()
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.accent)
-                .controlSize(.small)
-                .help("New request")
-                .accessibilityIdentifier("new-request-button")
+            Spacer()
+
+            Button {
+                coordinator.createOrFocusHiddenNewDraft()
+            } label: {
+                Image(systemName: "plus")
             }
+            .buttonStyle(.borderedProminent)
+            .tint(Color.accent)
+            .controlSize(.small)
+            .help("New request")
+            .accessibilityIdentifier("new-request-button")
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.surfaceRaised)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.borderSubtle, lineWidth: 1)
-                )
-        )
-    }
-
-    private var autoRevealingLibraryPane: some View {
-        ZStack(alignment: .leading) {
-            Rectangle()
-                .fill(Color.black.opacity(0.001))
-                .frame(width: isLibraryAutoRevealed ? WorkspaceLayout.sidebarWidth : WorkspaceLayout.sidebarRevealHitWidth)
-                .accessibilityHidden(true)
-
-            if isLibraryAutoRevealed {
-                libraryPane
-                    .frame(width: WorkspaceLayout.sidebarWidth)
-                    .shadow(color: .black.opacity(0.18), radius: 20, x: 10)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-        }
-        .frame(width: isLibraryAutoRevealed ? WorkspaceLayout.sidebarWidth : WorkspaceLayout.sidebarRevealHitWidth)
-        .frame(maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onHover { isHovered in
-            isLibraryAutoRevealed = isHovered
-        }
-        .animation(.easeInOut(duration: 0.16), value: isLibraryAutoRevealed)
+        .padding(.horizontal, 12)
+        .padding(.top, WorkspaceLayout.paneTopPadding)
+        .padding(.bottom, 12)
     }
 
     private func requestListRow(_ item: RequestListItem) -> some View {

@@ -205,6 +205,28 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(relaunchedCoordinator.state.workspaceRequest.urlString, "https://api.example.com/first")
     }
 
+    func testFileBackedPersistenceRestoresCollapsedLibraryAcrossCoordinatorRelaunch() async throws {
+        let fileURL = makeTemporaryLibraryFileURL()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        do {
+            let coordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+            await waitUntil("initial library load") { coordinator.hasCompletedInitialLibraryLoad }
+
+            XCTAssertFalse(coordinator.state.isLibraryCollapsed)
+            coordinator.setLibraryCollapsed(true)
+            XCTAssertTrue(coordinator.state.isLibraryCollapsed)
+            await coordinator.waitForPendingPersistence()
+        }
+
+        let relaunchedCoordinator = try makeFileBackedCoordinator(fileURL: fileURL)
+        await waitUntil("reloaded library state") { relaunchedCoordinator.hasCompletedInitialLibraryLoad }
+
+        XCTAssertTrue(relaunchedCoordinator.state.isLibraryCollapsed)
+        relaunchedCoordinator.toggleLibraryCollapsed()
+        XCTAssertFalse(relaunchedCoordinator.state.isLibraryCollapsed)
+    }
+
     func testInitialNoOpBindingWriteDoesNotBlockSelectionRestore() async throws {
         let timestamp = Date(timeIntervalSince1970: 1_700_001_000)
         let persisted = SavedRequest(
