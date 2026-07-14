@@ -28,6 +28,9 @@ struct CurlyApp: App {
                 .onDisappear {
                     coordinator.setWindowVisible(false)
                 }
+                .onChange(of: coordinator.state.isLibraryCollapsed) { _, isCollapsed in
+                    SidebarVisibilityPreferences.save(isCollapsed, arguments: ProcessInfo.processInfo.arguments)
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -88,20 +91,31 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 private extension CurlyApp {
     static func makeCoordinator() -> SessionCoordinator {
         let arguments = ProcessInfo.processInfo.arguments
+        var initialState = SessionState.initial
+        if let isCollapsed = SidebarVisibilityPreferences.load(arguments: arguments) {
+            initialState.isLibraryCollapsed = isCollapsed
+        }
         let coordinator: SessionCoordinator
 #if DEBUG
         if arguments.contains("--ui-test-stub-executor") {
             coordinator = SessionCoordinator(
+                initialState: initialState,
                 requestExecutor: UITestEchoRequestExecutor(),
                 requestLibrary: makeRequestLibraryDependencies(arguments: arguments)
             )
         } else {
-            coordinator = SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
+            coordinator = SessionCoordinator(
+                initialState: initialState,
+                requestLibrary: makeRequestLibraryDependencies(arguments: arguments)
+            )
         }
 
         return coordinator
 #else
-        coordinator = SessionCoordinator(requestLibrary: makeRequestLibraryDependencies(arguments: arguments))
+        coordinator = SessionCoordinator(
+            initialState: initialState,
+            requestLibrary: makeRequestLibraryDependencies(arguments: arguments)
+        )
         return coordinator
 #endif
     }
@@ -115,7 +129,18 @@ private extension CurlyApp {
         do {
             let fileURL: URL
 #if DEBUG
-            if let index = arguments.firstIndex(of: "--ui-test-library-file"),
+            if let index = arguments.firstIndex(of: "--ui-test-library-id"),
+               arguments.indices.contains(index + 1) {
+                let appSupport = try FileManager.default.url(
+                    for: .applicationSupportDirectory,
+                    in: .userDomainMask,
+                    appropriateFor: nil,
+                    create: true
+                )
+                fileURL = appSupport
+                    .appendingPathComponent("Curly/UITests", isDirectory: true)
+                    .appendingPathComponent("\(arguments[index + 1]).json")
+            } else if let index = arguments.firstIndex(of: "--ui-test-library-file"),
                arguments.indices.contains(index + 1) {
                 fileURL = URL(fileURLWithPath: arguments[index + 1])
             } else {
@@ -140,6 +165,38 @@ private extension CurlyApp {
 #endif
             return nil
         }
+    }
+}
+
+private enum SidebarVisibilityPreferences {
+    private static let collapsedKey = "workspace.sidebar.isCollapsed"
+
+    static func load(arguments: [String]) -> Bool? {
+        guard let defaults = defaults(arguments: arguments) else {
+            return nil
+        }
+        guard defaults.object(forKey: collapsedKey) != nil else {
+            return nil
+        }
+        return defaults.bool(forKey: collapsedKey)
+    }
+
+    static func save(_ isCollapsed: Bool, arguments: [String]) {
+        defaults(arguments: arguments)?.set(isCollapsed, forKey: collapsedKey)
+    }
+
+    private static func defaults(arguments: [String]) -> UserDefaults? {
+#if DEBUG
+        if arguments.contains("--ui-test-mode") {
+            guard arguments.contains("--ui-test-enable-persistence"),
+                  let index = arguments.firstIndex(of: "--ui-test-library-id"),
+                  arguments.indices.contains(index + 1) else {
+                return nil
+            }
+            return UserDefaults(suiteName: "com.example.Curly.UITests.\(arguments[index + 1])")
+        }
+#endif
+        return .standard
     }
 }
 
@@ -257,6 +314,14 @@ struct WorkspaceCommands: Commands {
     @ObservedObject var coordinator: SessionCoordinator
 
     var body: some Commands {
+        CommandGroup(replacing: .sidebar) {
+            Button(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar") {
+                coordinator.toggleLibraryCollapsed()
+            }
+            .keyboardShortcut("s", modifiers: [.command, .control])
+            .accessibilityIdentifier("toggle-sidebar-command")
+        }
+
         CommandGroup(after: .textEditing) {
             Button("Manage Variables…") {
                 coordinator.presentVariablesModal()

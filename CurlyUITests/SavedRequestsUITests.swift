@@ -89,17 +89,26 @@ final class SavedRequestsUITests: XCTestCase {
 
         do {
             let app = launchPersistentApp(libraryFileURL: libraryFileURL)
-            let collapseButton = app.buttons["toggle-library-button"].firstMatch
-            XCTAssertTrue(collapseButton.waitForExistence(timeout: 4))
-            collapseButton.click()
-            XCTAssertTrue(app.buttons["expand-library-button"].firstMatch.waitForExistence(timeout: 3))
-            Thread.sleep(forTimeInterval: 1.0)
+            let sidebar = app.buttons["new-request-button"].firstMatch
+            XCTAssertTrue(sidebar.waitForExistence(timeout: 4))
+
+            sidebarToggleButton(in: app).click()
+            XCTAssertTrue(waitUntil(timeout: 3) { !sidebar.exists })
             app.terminate()
         }
 
-        let relaunchedApp = launchPersistentApp(libraryFileURL: libraryFileURL)
-        defer { relaunchedApp.terminate() }
-        XCTAssertTrue(relaunchedApp.buttons["expand-library-button"].firstMatch.waitForExistence(timeout: 4))
+        let collapsedRelaunch = launchPersistentApp(libraryFileURL: libraryFileURL)
+        XCTAssertTrue(sidebarToggleButton(in: collapsedRelaunch).waitForExistence(timeout: 4))
+        XCTAssertFalse(collapsedRelaunch.buttons["new-request-button"].firstMatch.exists)
+
+        sidebarToggleButton(in: collapsedRelaunch).click()
+        XCTAssertTrue(collapsedRelaunch.buttons["new-request-button"].firstMatch.waitForExistence(timeout: 3))
+        collapsedRelaunch.terminate()
+
+        let expandedRelaunch = launchPersistentApp(libraryFileURL: libraryFileURL)
+        defer { expandedRelaunch.terminate() }
+        XCTAssertTrue(sidebarToggleButton(in: expandedRelaunch).waitForExistence(timeout: 4))
+        XCTAssertTrue(expandedRelaunch.buttons["new-request-button"].firstMatch.waitForExistence(timeout: 2))
     }
 
     private func launchPersistentApp(libraryFileURL: URL) -> XCUIApplication {
@@ -107,19 +116,20 @@ final class SavedRequestsUITests: XCTestCase {
         app.launchArguments = [
             "--ui-test-mode",
             "--ui-test-enable-persistence",
-            "--ui-test-library-file",
-            libraryFileURL.path
+            "--ui-test-library-id",
+            libraryFileURL.deletingPathExtension().lastPathComponent
         ]
         app.launch()
         return app
     }
 
     private func makeTemporaryLibraryFileURL() -> URL {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("curly-uitests", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let fileURL = directory.appendingPathComponent("\(UUID().uuidString).json")
-        try? FileManager.default.removeItem(at: fileURL)
-        return fileURL
+        let directory = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(
+                "Library/Containers/com.example.Curly/Data/Library/Application Support/Curly/UITests",
+                isDirectory: true
+            )
+        return directory.appendingPathComponent("\(UUID().uuidString).json")
     }
 
     private func replaceText(_ text: String, in element: XCUIElement) {
@@ -131,13 +141,17 @@ final class SavedRequestsUITests: XCTestCase {
     }
 
     private func waitForSavedRequestNamed(_ name: String, in app: XCUIApplication, timeout: TimeInterval = 3) -> Bool {
-        waitUntil(timeout: timeout) { app.staticTexts[name].firstMatch.exists }
+        waitUntil(timeout: timeout) { app.buttons[name].firstMatch.exists }
     }
 
     private func selectRequest(named name: String, in app: XCUIApplication) {
-        let target = app.staticTexts[name].firstMatch
+        let target = app.buttons[name].firstMatch
         XCTAssertTrue(target.waitForExistence(timeout: 3), "Expected saved request named \(name) to exist.")
         target.click()
+    }
+
+    private func sidebarToggleButton(in app: XCUIApplication) -> XCUIElement {
+        app.toolbars.buttons["toggle-library-button"].firstMatch
     }
 
     private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {

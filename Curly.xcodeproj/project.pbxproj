@@ -38,6 +38,7 @@
 		C00000010000000000000001 /* URLBarImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* URLBarImportUITests.swift */; };
 		C00000010000000000000003 /* SavedRequestsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000003 /* SavedRequestsUITests.swift */; };
 		C00000010000000000000004 /* VariablesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000004 /* VariablesUITests.swift */; };
+		C00000010000000000000005 /* SidebarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000005 /* SidebarUITests.swift */; };
 		C00000010000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
 /* End PBXBuildFile section */
 
@@ -93,6 +94,7 @@
 		C00000110000000000000001 /* URLBarImportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLBarImportUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000003 /* SavedRequestsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedRequestsUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000004 /* VariablesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VariablesUITests.swift; sourceTree = "<group>"; };
+		C00000110000000000000005 /* SidebarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000002 /* CurlyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurlyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -240,6 +242,7 @@
 				C00000110000000000000001 /* URLBarImportUITests.swift */,
 				C00000110000000000000003 /* SavedRequestsUITests.swift */,
 				C00000110000000000000004 /* VariablesUITests.swift */,
+				C00000110000000000000005 /* SidebarUITests.swift */,
 			);
 			path = CurlyUITests;
 			sourceTree = "<group>";
@@ -396,6 +399,7 @@
 				C00000010000000000000001 /* URLBarImportUITests.swift in Sources */,
 				C00000010000000000000003 /* SavedRequestsUITests.swift in Sources */,
 				C00000010000000000000004 /* VariablesUITests.swift in Sources */,
+				C00000010000000000000005 /* SidebarUITests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
