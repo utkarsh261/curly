@@ -649,6 +649,44 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.statusSubtitle, "offline")
     }
 
+    func testValidationFailureAfterSuccessReplacesStatusAndPreservesPreviousResponse() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/success")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: request,
+                statusCode: 200,
+                headers: [],
+                bodyData: Data("ok".utf8),
+                mimeType: "text/plain",
+                duration: 0.01,
+                timestamp: Date()
+            )
+        )
+        await waitUntil { coordinator.state.executionState == .succeeded }
+        XCTAssertEqual(coordinator.state.responseSummaryStatusValue, "200")
+
+        coordinator.setURL("https://{{missingHost}}/users")
+        coordinator.runCurrentRequest()
+
+        XCTAssertEqual(coordinator.state.executionState, .failed)
+        XCTAssertEqual(coordinator.currentRequestIssueMessage, "Define missingHost before running this request.")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.body.bodyText, "ok")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+        XCTAssertEqual(coordinator.globalVisibleResponseState?.body.bodyText, "ok")
+        XCTAssertEqual(coordinator.state.responseSummaryStatusValue, "Failed")
+        XCTAssertEqual(coordinator.state.responseTone, .failure)
+        let invocationCount = await executor.invocationCount
+        XCTAssertEqual(invocationCount, 1)
+    }
+
     func testWindowCloseAndOpenPreservesSessionState() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(

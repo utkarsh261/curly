@@ -163,6 +163,42 @@ final class URLBarImportUITests: XCTestCase {
         )
     }
 
+    func testValidationFailureReplacesStatusAndPreservesPreviousResponse() throws {
+        let (app, urlField) = launchWithURLBarInput(
+            "https://example.com/success",
+            usesStubExecutor: true
+        )
+        defer { app.terminate() }
+
+        triggerRun(app)
+        XCTAssertTrue(app.staticTexts["response-body-text"].firstMatch.waitForExistence(timeout: 5))
+
+        let responseStatus = app.staticTexts["response-status-value"].firstMatch
+        XCTAssertTrue(responseStatus.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { self.text(of: responseStatus) == "200" },
+            "The successful request should display status 200."
+        )
+
+        paste("https://{{missingHost}}/users", into: urlField)
+        triggerRun(app)
+
+        XCTAssertTrue(app.staticTexts["Request Issue"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Define missingHost before running this request."].waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { self.text(of: responseStatus) == "Failed" },
+            "A validation failure should replace the previous HTTP status."
+        )
+        XCTAssertTrue(
+            app.staticTexts["response-body-text"].firstMatch.waitForExistence(timeout: 3),
+            "The previous response should remain inspectable after validation fails."
+        )
+        XCTAssertTrue(
+            app.staticTexts["stale-response-badge"].firstMatch.waitForExistence(timeout: 3),
+            "The preserved response should be marked stale."
+        )
+    }
+
     func testLocationCurlImportsWithWarningAndRunEnabled() throws {
         let (app, urlField) = launchWithURLBarInput("curl --location https://www.example.com")
 
@@ -460,6 +496,13 @@ final class URLBarImportUITests: XCTestCase {
             return false
         }
         return ["1", "true", "on", "selected"].contains(value.lowercased())
+    }
+
+    private func text(of element: XCUIElement) -> String {
+        if let value = element.value as? String, !value.isEmpty {
+            return value
+        }
+        return element.label
     }
 
     private func ensureMainWindowIsOpen(app: XCUIApplication, urlField: XCUIElement) {

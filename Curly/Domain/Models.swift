@@ -933,6 +933,9 @@ struct SessionState: Equatable {
         if executionState == .running {
             return "Running"
         }
+        if executionState == .failed {
+            return "Failed"
+        }
         if let statusCode = visibleResponseState?.summary.statusCode {
             return "\(statusCode)"
         }
@@ -952,7 +955,13 @@ struct SessionState: Equatable {
     }
 
     var responseTone: ResponseTone {
-        visibleResponseState?.summary.tone ?? statusTone
+        if executionState == .running {
+            return .neutral
+        }
+        if executionState == .failed {
+            return .failure
+        }
+        return visibleResponseState?.summary.tone ?? statusTone
     }
 
     var responseIsStale: Bool {

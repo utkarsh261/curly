@@ -1656,6 +1656,7 @@ private struct StatusMetric: View {
                 .foregroundStyle(toneColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
+                .accessibilityIdentifier("response-status-value")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)

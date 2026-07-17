@@ -254,10 +254,7 @@ final class SessionCoordinator: ObservableObject {
     func runCurrentRequest() {
         let result = resolveCurrentRequestForRun()
         guard let resolvedRequest = result.resolvedRequest else {
-            state.executionState = .failed
-            setInlineError(result.errorMessage ?? "The request is not runnable yet.")
-            globalExecutionState = .failed
-            globalInlineMessage = InlineMessage(severity: .error, text: result.errorMessage ?? "The request is not runnable yet.")
+            recordPreflightFailure(result.errorMessage ?? "The request is not runnable yet.")
             return
         }
         startExecution(using: resolvedRequest)
@@ -616,10 +613,7 @@ final class SessionCoordinator: ObservableObject {
         }
 
         guard request.isMinimallyValid else {
-            state.executionState = .failed
-            setInlineError(request.lightweightValidationMessage ?? "The request is not runnable yet.")
-            globalExecutionState = .failed
-            globalInlineMessage = InlineMessage(severity: .error, text: request.lightweightValidationMessage ?? "The request is not runnable yet.")
+            recordPreflightFailure(request.lightweightValidationMessage ?? "The request is not runnable yet.")
             return
         }
 
@@ -720,6 +714,21 @@ final class SessionCoordinator: ObservableObject {
                     self.currentRunTask = nil
                 }
             }
+        }
+    }
+
+    private func recordPreflightFailure(_ message: String) {
+        state.executionState = .failed
+        setInlineError(message)
+        globalExecutionState = .failed
+        globalInlineMessage = InlineMessage(severity: .error, text: message)
+
+        if let selectedSavedRequestID {
+            executionStatesByRequestID[selectedSavedRequestID] = RequestExecutionState(
+                lastExecutedRequest: state.lastExecutedRequest,
+                executionState: .failed,
+                visibleResponseState: state.visibleResponseState
+            )
         }
     }
 
