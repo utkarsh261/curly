@@ -40,11 +40,51 @@ enum RequestBody: Equatable, Codable {
     }
 }
 
+enum TLSCertificateVerification: String, Equatable, Codable {
+    case systemDefault
+    case disabled
+}
+
 struct Request: Equatable, Codable {
     var method: HTTPMethod
     var urlString: String
     var headers: [Header]
     var body: RequestBody
+    var tlsCertificateVerification: TLSCertificateVerification
+
+    init(
+        method: HTTPMethod,
+        urlString: String,
+        headers: [Header],
+        body: RequestBody,
+        tlsCertificateVerification: TLSCertificateVerification = .systemDefault
+    ) {
+        self.method = method
+        self.urlString = urlString
+        self.headers = headers
+        self.body = body
+        self.tlsCertificateVerification = tlsCertificateVerification
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case method
+        case urlString
+        case headers
+        case body
+        case tlsCertificateVerification
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        method = try container.decode(HTTPMethod.self, forKey: .method)
+        urlString = try container.decode(String.self, forKey: .urlString)
+        headers = try container.decode([Header].self, forKey: .headers)
+        body = try container.decode(RequestBody.self, forKey: .body)
+        tlsCertificateVerification = try container.decodeIfPresent(
+            TLSCertificateVerification.self,
+            forKey: .tlsCertificateVerification
+        ) ?? .systemDefault
+    }
 
     static let empty = Request(method: .get, urlString: "", headers: [], body: .none)
 
@@ -431,7 +471,8 @@ enum VariableResolver {
             method: request.method,
             urlString: resolvedURL,
             headers: resolvedHeaders,
-            body: request.body
+            body: request.body,
+            tlsCertificateVerification: request.tlsCertificateVerification
         )
 
         if let validationMessage = resolvedRequest.lightweightValidationMessage {

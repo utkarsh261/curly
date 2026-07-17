@@ -43,6 +43,10 @@ struct CurlyApp: App {
         }
         .windowResizability(.contentSize)
 
+        Settings {
+            TLSVerificationSettingsView()
+        }
+
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(coordinator)
@@ -72,6 +76,32 @@ struct CurlyApp: App {
 #endif
 }
 
+private struct TLSVerificationSettingsView: View {
+    @AppStorage(TLSVerificationPreferences.allowInsecureLoopbackHostsKey)
+    private var allowsInsecureLoopbackTLS = false
+
+    var body: some View {
+        Form {
+            Section("Security") {
+                Toggle(
+                    "Skip TLS certificate verification for loopback hosts",
+                    isOn: $allowsInsecureLoopbackTLS
+                )
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("allow-insecure-loopback-tls-checkbox")
+
+                Text("Applies to localhost, *.localhost, 127.0.0.0/8, and ::1. Other hosts continue using normal certificate verification.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .frame(width: 520, height: 180)
+    }
+}
+
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     var coordinatorProvider: (() -> SessionCoordinator?)?
 
@@ -91,6 +121,13 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 private extension CurlyApp {
     static func makeCoordinator() -> SessionCoordinator {
         let arguments = ProcessInfo.processInfo.arguments
+#if DEBUG
+        if arguments.contains("--ui-test-mode") {
+            UserDefaults.standard.removeObject(
+                forKey: TLSVerificationPreferences.allowInsecureLoopbackHostsKey
+            )
+        }
+#endif
         var initialState = SessionState.initial
         if let isCollapsed = SidebarVisibilityPreferences.load(arguments: arguments) {
             initialState.isLibraryCollapsed = isCollapsed

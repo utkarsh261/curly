@@ -59,6 +59,7 @@ private struct CurlCommand {
     var headers: [Header] = []
     var bodyParts: [String] = []
     var usesDataBody = false
+    var disablesTLSCertificateVerification = false
     var warnings: [String] = []
 
     mutating func setMethod(_ newMethod: HTTPMethod, source: String) {
@@ -88,7 +89,19 @@ private struct CurlCommandParser {
             let token = tokens[index]
 
             if token.hasPrefix("-") {
-                let parsedOption = try parseOptionToken(token)
+                let parsedOptions = try parseOptionTokens(token)
+                if parsedOptions.count > 1 {
+                    for parsedOption in parsedOptions {
+                        guard let definition = registry.definition(named: parsedOption.name) else {
+                            continue
+                        }
+                        try definition.behavior.apply(value: nil, token: parsedOption.name, command: &command)
+                    }
+                    index += 1
+                    continue
+                }
+
+                let parsedOption = parsedOptions[0]
                 guard let definition = registry.definition(named: parsedOption.name) else {
                     command.warnings.append("Ignored unsupported cURL flag `\(parsedOption.name)`.")
                     index += 1
@@ -128,11 +141,11 @@ private struct CurlCommandParser {
         return command
     }
 
-    private func parseOptionToken(_ token: String) throws -> ParsedCurlOption {
+    private func parseOptionTokens(_ token: String) throws -> [ParsedCurlOption] {
         if let separator = token.firstIndex(of: "="), token.hasPrefix("--") {
             let name = String(token[..<separator])
             let value = String(token[token.index(after: separator)...])
-            return ParsedCurlOption(name: name, attachedValue: value)
+            return [ParsedCurlOption(name: name, attachedValue: value)]
         }
 
         for shortName in ["-X", "-H", "-d", "-A", "-b", "-u", "-F"] where token.hasPrefix(shortName) && token != shortName {
@@ -140,10 +153,28 @@ private struct CurlCommandParser {
             guard !value.isEmpty else {
                 break
             }
-            return ParsedCurlOption(name: shortName, attachedValue: value)
+            return [ParsedCurlOption(name: shortName, attachedValue: value)]
         }
 
-        return ParsedCurlOption(name: token, attachedValue: nil)
+        if token.hasPrefix("-"), !token.hasPrefix("--"), token.count > 2 {
+            let bundledOptions = token.dropFirst().map {
+                ParsedCurlOption(name: "-\($0)", attachedValue: nil)
+            }
+            let containsOnlyNoValueOptions = bundledOptions.allSatisfy { option in
+                guard let definition = registry.definition(named: option.name) else {
+                    return false
+                }
+                if case .none = definition.arity {
+                    return true
+                }
+                return false
+            }
+            if containsOnlyNoValueOptions {
+                return bundledOptions
+            }
+        }
+
+        return [ParsedCurlOption(name: token, attachedValue: nil)]
     }
 }
 
@@ -180,7 +211,8 @@ private struct CurlOptionRegistry {
             CurlOptionDefinition(names: ["--proxy", "-x", "--proxy-user", "--proxy-header"], arity: .requiredValue, behavior: .warnValue("Proxy options are not represented yet.")),
             CurlOptionDefinition(names: ["--cacert", "--cert", "--key", "--cert-type", "--key-type"], arity: .requiredValue, behavior: .warnValue("TLS client options are not represented yet.")),
             CurlOptionDefinition(names: ["--connect-timeout", "--max-time", "--retry"], arity: .requiredValue, behavior: .warnValue("Request timing/retry options are not represented yet.")),
-            CurlOptionDefinition(names: ["--http1.1", "--http2", "--http3", "--insecure", "-k", "--no-progress-meter", "--progress-bar"], arity: .none, behavior: .warn("Ignored transport/display flag."))
+            CurlOptionDefinition(names: ["--insecure", "-k"], arity: .none, behavior: .disableTLSCertificateVerification),
+            CurlOptionDefinition(names: ["--http1.1", "--http2", "--http3", "--no-progress-meter", "--progress-bar"], arity: .none, behavior: .warn("Ignored transport/display flag."))
         ]
     }
 
@@ -211,6 +243,7 @@ private enum CurlOptionBehavior {
     case basicAuth
     case head
     case multipartForm
+    case disableTLSCertificateVerification
     case ignore
     case warn(String)
     case warnValue(String)
@@ -289,6 +322,9 @@ private enum CurlOptionBehavior {
             }
             command.warnings.append("Multipart form data is not represented yet.")
 
+        case .disableTLSCertificateVerification:
+            command.disablesTLSCertificateVerification = true
+
         case .ignore:
             return
 
@@ -332,7 +368,8 @@ private struct CurlRequestMapper {
             method: command.method ?? (body == nil ? .get : .post),
             urlString: url,
             headers: headers,
-            body: body.map(RequestBody.text) ?? .none
+            body: body.map(RequestBody.text) ?? .none,
+            tlsCertificateVerification: command.disablesTLSCertificateVerification ? .disabled : .systemDefault
         )
     }
 }

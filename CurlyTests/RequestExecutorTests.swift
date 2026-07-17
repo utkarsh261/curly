@@ -126,6 +126,133 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertEqual(sent?.httpMethod, "HEAD")
     }
 
+    func testUsesSystemTrustPolicyByDefault() async throws {
+        let transport = StubTransport(
+            result: .success((Data(), makeHTTPResponse(statusCode: 200, headers: [:])))
+        )
+        let executor = URLSessionRequestExecutor(
+            transport: transport,
+            allowsInsecureLoopbackTLS: { false }
+        )
+
+        _ = try await executor.execute(
+            Request(method: .get, urlString: "https://example.com", headers: [], body: .none)
+        )
+
+        let policy = await transport.capturedServerTrustPolicy
+        XCTAssertEqual(policy, .systemDefault)
+    }
+
+    func testRequestInsecurePolicyOverridesSystemTrustForAnyHost() async throws {
+        let transport = StubTransport(
+            result: .success((Data(), makeHTTPResponse(statusCode: 200, headers: [:])))
+        )
+        let executor = URLSessionRequestExecutor(
+            transport: transport,
+            allowsInsecureLoopbackTLS: { false }
+        )
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [],
+            body: .none,
+            tlsCertificateVerification: .disabled
+        )
+
+        _ = try await executor.execute(request)
+
+        let policy = await transport.capturedServerTrustPolicy
+        XCTAssertEqual(policy, .disabled)
+    }
+
+    func testGlobalPreferenceUsesLoopbackOnlyTrustPolicy() async throws {
+        let transport = StubTransport(
+            result: .success((Data(), makeHTTPResponse(statusCode: 200, headers: [:])))
+        )
+        let executor = URLSessionRequestExecutor(
+            transport: transport,
+            allowsInsecureLoopbackTLS: { true }
+        )
+
+        _ = try await executor.execute(
+            Request(method: .get, urlString: "https://localhost:9443", headers: [], body: .none)
+        )
+
+        let policy = await transport.capturedServerTrustPolicy
+        XCTAssertEqual(policy, .disabledForLoopbackHosts)
+    }
+
+    func testGlobalPreferenceLeavesRemoteRequestsOnSystemTrustPolicy() async throws {
+        let transport = StubTransport(
+            result: .success((Data(), makeHTTPResponse(statusCode: 200, headers: [:])))
+        )
+        let executor = URLSessionRequestExecutor(
+            transport: transport,
+            allowsInsecureLoopbackTLS: { true }
+        )
+
+        _ = try await executor.execute(
+            Request(method: .get, urlString: "https://example.com", headers: [], body: .none)
+        )
+
+        let policy = await transport.capturedServerTrustPolicy
+        XCTAssertEqual(policy, .systemDefault)
+    }
+
+    func testLoopbackHostClassification() {
+        for host in [
+            "localhost",
+            "LOCALHOST",
+            "api.localhost",
+            "127.0.0.1",
+            "127.255.255.255",
+            "::1",
+            "0:0:0:0:0:0:0:1",
+            "[::1]"
+        ] {
+            XCTAssertTrue(LoopbackHost.matches(host), "Expected \(host) to be loopback")
+        }
+
+        for host in [
+            "localhost.example.com",
+            "example.local",
+            "192.168.1.10",
+            "10.0.0.1",
+            "128.0.0.1",
+            "::2"
+        ] {
+            XCTAssertFalse(LoopbackHost.matches(host), "Expected \(host) not to be loopback")
+        }
+    }
+
+    func testSelfSignedLocalhostCertificateRequiresAnExplicitBypass() async throws {
+        let serverURL = try XCTUnwrap(URL(string: "https://localhost:9443/json"))
+
+        let secureRequest = Request(
+            method: .get,
+            urlString: serverURL.absoluteString,
+            headers: [],
+            body: .none
+        )
+        let strictExecutor = URLSessionRequestExecutor(allowsInsecureLoopbackTLS: { false })
+
+        do {
+            _ = try await strictExecutor.execute(secureRequest)
+            XCTFail("A newly generated self-signed certificate should fail system validation.")
+        } catch {
+            // Expected: the generated certificate is not in the system trust store.
+        }
+
+        var importedInsecureRequest = secureRequest
+        importedInsecureRequest.tlsCertificateVerification = .disabled
+        let requestOverrideResponse = try await strictExecutor.execute(importedInsecureRequest)
+        XCTAssertEqual(requestOverrideResponse.statusCode, 200)
+
+        let loopbackExecutor = URLSessionRequestExecutor(allowsInsecureLoopbackTLS: { true })
+        let globalPreferenceResponse = try await loopbackExecutor.execute(secureRequest)
+        XCTAssertEqual(globalPreferenceResponse.statusCode, 200)
+    }
+
     func testDocumentedLocalServerCurlExamplesImportRunAndRender() async throws {
         let server = try await LocalHTTPTestServer.start()
         defer { server.stop() }
@@ -333,7 +460,7 @@ private final class LocalHTTPTestServer {
             .deletingLastPathComponent()
             .appendingPathComponent("test_server.py")
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.executableURL = testPythonExecutableURL()
         process.arguments = [scriptURL.path]
         process.standardOutput = Pipe()
         process.standardError = Pipe()
@@ -370,18 +497,30 @@ private final class LocalHTTPTestServer {
     }
 }
 
+private func testPythonExecutableURL() -> URL {
+    let developerDirectory = ProcessInfo.processInfo.environment["DEVELOPER_DIR"]
+        ?? "/Applications/Xcode.app/Contents/Developer"
+    return URL(fileURLWithPath: developerDirectory)
+        .appendingPathComponent("usr/bin/python3")
+}
+
 private actor StubTransport: HTTPTransporting {
     let result: Result<(Data, HTTPURLResponse), Error>
     private(set) var capturedRequest: URLRequest?
+    private(set) var capturedServerTrustPolicy: ServerTrustPolicy?
     private(set) var invocationCount = 0
 
     init(result: Result<(Data, HTTPURLResponse), Error>) {
         self.result = result
     }
 
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    func send(
+        _ request: URLRequest,
+        serverTrustPolicy: ServerTrustPolicy
+    ) async throws -> (Data, HTTPURLResponse) {
         invocationCount += 1
         capturedRequest = request
+        capturedServerTrustPolicy = serverTrustPolicy
         return try result.get()
     }
 }

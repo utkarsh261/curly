@@ -7,12 +7,14 @@ delays, streaming, and a complex JSON endpoint for parser testing.
 """
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import argparse
 import json
 import urllib.parse
 import base64
 import time
 import os
 import re
+import ssl
 
 PORT = 9999
 
@@ -625,8 +627,24 @@ class TestHandler(BaseHTTPRequestHandler):
 # ── Entry Point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--tls-cert")
+    parser.add_argument("--tls-key")
+    args = parser.parse_args()
+    if bool(args.tls_cert) != bool(args.tls_key):
+        parser.error("--tls-cert and --tls-key must be provided together")
+
+    PORT = args.port
     server = HTTPServer(("127.0.0.1", PORT), TestHandler)
-    print(f"  http://localhost:{PORT}")
+    scheme = "http"
+    if args.tls_cert:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=args.tls_cert, keyfile=args.tls_key)
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+        scheme = "https"
+
+    print(f"  {scheme}://localhost:{PORT}")
     print("  Press Ctrl+C to stop.")
     try:
         server.serve_forever()

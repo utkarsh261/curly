@@ -124,6 +124,34 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(result.warnings, [])
     }
 
+    func testInsecureFlagsDisableCertificateVerificationForImportedRequest() throws {
+        for flag in ["-k", "--insecure"] {
+            let result = try importer.parse("curl \(flag) https://example.com")
+
+            XCTAssertEqual(result.request.tlsCertificateVerification, .disabled)
+            XCTAssertEqual(result.warnings, [])
+        }
+    }
+
+    func testBundledInsecureFlagDisablesCertificateVerification() throws {
+        let locationResult = try importer.parse("curl -kL https://example.com")
+        XCTAssertEqual(locationResult.request.tlsCertificateVerification, .disabled)
+        XCTAssertEqual(
+            locationResult.warnings,
+            ["Redirect-following from `--location` is not represented yet."]
+        )
+
+        let verboseResult = try importer.parse("curl -vk https://example.com")
+        XCTAssertEqual(verboseResult.request.tlsCertificateVerification, .disabled)
+        XCTAssertEqual(verboseResult.warnings, ["Ignored terminal output flag `-v`."])
+    }
+
+    func testImportWithoutInsecureFlagUsesSystemCertificateVerification() throws {
+        let request = try importer.parse("curl https://example.com").request
+
+        XCTAssertEqual(request.tlsCertificateVerification, .systemDefault)
+    }
+
     func testTerminalDisplayFlagsWarn() throws {
         let result = try importer.parse("curl -v -i -s --fail https://example.com")
 

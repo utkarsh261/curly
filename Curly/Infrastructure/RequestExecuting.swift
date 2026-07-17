@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 protocol RequestExecuting {
@@ -5,12 +6,60 @@ protocol RequestExecuting {
 }
 
 protocol HTTPTransporting {
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
+    func send(
+        _ request: URLRequest,
+        serverTrustPolicy: ServerTrustPolicy
+    ) async throws -> (Data, HTTPURLResponse)
 }
 
-struct URLSessionHTTPTransport: HTTPTransporting {
-    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+enum ServerTrustPolicy: Equatable {
+    case systemDefault
+    case disabled
+    case disabledForLoopbackHosts
+}
+
+enum TLSVerificationPreferences {
+    static let allowInsecureLoopbackHostsKey = "security.allowInsecureLoopbackTLS"
+}
+
+final class URLSessionHTTPTransport: HTTPTransporting, @unchecked Sendable {
+    private let disabledVerificationSession: URLSession
+    private let loopbackVerificationSession: URLSession
+
+    init() {
+        disabledVerificationSession = URLSession(
+            configuration: .default,
+            delegate: ServerTrustURLSessionDelegate(policy: .disabled),
+            delegateQueue: nil
+        )
+        loopbackVerificationSession = URLSession(
+            configuration: .default,
+            delegate: ServerTrustURLSessionDelegate(policy: .disabledForLoopbackHosts),
+            delegateQueue: nil
+        )
+    }
+
+    deinit {
+        disabledVerificationSession.invalidateAndCancel()
+        loopbackVerificationSession.invalidateAndCancel()
+    }
+
+    func send(
+        _ request: URLRequest,
+        serverTrustPolicy: ServerTrustPolicy
+    ) async throws -> (Data, HTTPURLResponse) {
+        let data: Data
+        let response: URLResponse
+
+        switch serverTrustPolicy {
+        case .systemDefault:
+            (data, response) = try await URLSession.shared.data(for: request)
+        case .disabled:
+            (data, response) = try await disabledVerificationSession.data(for: request)
+        case .disabledForLoopbackHosts:
+            (data, response) = try await loopbackVerificationSession.data(for: request)
+        }
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ExecutionError.transport("The server did not return an HTTP response.")
         }
@@ -18,16 +67,83 @@ struct URLSessionHTTPTransport: HTTPTransporting {
     }
 }
 
+private final class ServerTrustURLSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    private let policy: ServerTrustPolicy
+
+    init(policy: ServerTrustPolicy) {
+        self.policy = policy
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let serverTrust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        let shouldDisableVerification: Bool
+        switch policy {
+        case .systemDefault:
+            shouldDisableVerification = false
+        case .disabled:
+            shouldDisableVerification = true
+        case .disabledForLoopbackHosts:
+            shouldDisableVerification = LoopbackHost.matches(challenge.protectionSpace.host)
+        }
+
+        guard shouldDisableVerification else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        completionHandler(.useCredential, URLCredential(trust: serverTrust))
+    }
+}
+
+enum LoopbackHost {
+    static func matches(_ rawHost: String) -> Bool {
+        let host = rawHost
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            .lowercased()
+
+        if host == "localhost" || host.hasSuffix(".localhost") {
+            return true
+        }
+
+        var ipv4Address = in_addr()
+        if host.withCString({ inet_pton(AF_INET, $0, &ipv4Address) }) == 1 {
+            return UInt32(bigEndian: ipv4Address.s_addr) >> 24 == 127
+        }
+
+        var ipv6Address = in6_addr()
+        guard host.withCString({ inet_pton(AF_INET6, $0, &ipv6Address) }) == 1 else {
+            return false
+        }
+        return withUnsafeBytes(of: ipv6Address) { bytes in
+            bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1
+        }
+    }
+}
+
 struct URLSessionRequestExecutor: RequestExecuting {
     private let transport: HTTPTransporting
     private let now: () -> Date
+    private let allowsInsecureLoopbackTLS: @Sendable () -> Bool
 
     init(
         transport: HTTPTransporting = URLSessionHTTPTransport(),
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        allowsInsecureLoopbackTLS: @escaping @Sendable () -> Bool = {
+            UserDefaults.standard.bool(forKey: TLSVerificationPreferences.allowInsecureLoopbackHostsKey)
+        }
     ) {
         self.transport = transport
         self.now = now
+        self.allowsInsecureLoopbackTLS = allowsInsecureLoopbackTLS
     }
 
     func execute(_ request: Request) async throws -> ExecutedResponse {
@@ -39,7 +155,10 @@ struct URLSessionRequestExecutor: RequestExecuting {
         let start = now()
 
         do {
-            let (bodyData, httpResponse) = try await transport.send(urlRequest)
+            let (bodyData, httpResponse) = try await transport.send(
+                urlRequest,
+                serverTrustPolicy: effectiveServerTrustPolicy(for: request)
+            )
             let end = now()
             let headers = httpResponse.allHeaderFields
                 .map { ResponseHeader(name: String(describing: $0.key), value: String(describing: $0.value)) }
@@ -59,6 +178,18 @@ struct URLSessionRequestExecutor: RequestExecuting {
         } catch {
             throw ExecutionError.transport(error.localizedDescription)
         }
+    }
+
+    private func effectiveServerTrustPolicy(for request: Request) -> ServerTrustPolicy {
+        if request.tlsCertificateVerification == .disabled {
+            return .disabled
+        }
+        if allowsInsecureLoopbackTLS(),
+           let host = URL(string: request.urlString)?.host,
+           LoopbackHost.matches(host) {
+            return .disabledForLoopbackHosts
+        }
+        return .systemDefault
     }
 
     private func buildURLRequest(from request: Request) throws -> URLRequest {

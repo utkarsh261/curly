@@ -75,6 +75,53 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertTrue(Request(method: .get, urlString: "http://localhost:3000", headers: [], body: .none).isMinimallyValid)
     }
 
+    func testOlderEncodedRequestDefaultsToSystemCertificateVerification() throws {
+        let original = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [],
+            body: .none,
+            tlsCertificateVerification: .disabled
+        )
+        let encoded = try JSONEncoder().encode(original)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "tlsCertificateVerification")
+        let legacyData = try JSONSerialization.data(withJSONObject: object)
+
+        let decoded = try JSONDecoder().decode(Request.self, from: legacyData)
+
+        XCTAssertEqual(decoded.tlsCertificateVerification, .systemDefault)
+    }
+
+    func testRequestCertificateVerificationPolicyRoundTrips() throws {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [],
+            body: .none,
+            tlsCertificateVerification: .disabled
+        )
+
+        let decoded = try JSONDecoder().decode(Request.self, from: JSONEncoder().encode(request))
+
+        XCTAssertEqual(decoded, request)
+    }
+
+    func testVariableResolutionPreservesHiddenCertificateVerificationPolicy() throws {
+        let request = Request(
+            method: .get,
+            urlString: "https://{{host}}",
+            headers: [],
+            body: .none,
+            tlsCertificateVerification: .disabled
+        )
+        let variable = Variable(name: "host", value: "localhost:9443", scope: .global)
+
+        let resolution = VariableResolver.resolve(request, variables: [variable])
+
+        XCTAssertEqual(resolution.resolvedRequest?.tlsCertificateVerification, .disabled)
+    }
+
     func testSkipsEnabledHeadersWithoutNames() {
         let request = Request(
             method: .get,

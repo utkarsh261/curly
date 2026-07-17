@@ -1,6 +1,6 @@
 import AppKit
-import XCTest
 import Foundation
+import XCTest
 
 @MainActor
 final class URLBarImportUITests: XCTestCase {
@@ -254,6 +254,30 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5))
     }
 
+    func testSettingsToggleAllowsLoopbackTLSRequestEndToEnd() throws {
+        let url = "https://localhost:9443/json"
+        let (app, urlField) = launchWithURLBarInput(url)
+        defer { app.terminate() }
+
+        XCTAssertEqual(urlField.value as? String, url)
+        triggerRun(app)
+
+        XCTAssertTrue(
+            app.staticTexts["Request Issue"].waitForExistence(timeout: 5),
+            "The loopback TLS request should fail before the Settings override is enabled."
+        )
+        XCTAssertFalse(app.scrollViews["response-json-pretty"].exists)
+
+        setLoopbackTLSVerificationBypass(true, in: app)
+        triggerRun(app)
+
+        XCTAssertTrue(
+            app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5),
+            "The same loopback TLS request should render after enabling the Settings override."
+        )
+        XCTAssertFalse(app.staticTexts["Request Issue"].exists)
+    }
+
     func testLocalServerPutRawTextCurlRunsAndRendersEchoedBody() async throws {
         let server = try await UITestLocalHTTPServer.start()
         defer { server.stop() }
@@ -408,6 +432,34 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(runButton.isEnabled, "Run button should be enabled before triggering the request.")
         app.activate()
         app.typeKey(.return, modifierFlags: .command)
+    }
+
+    private func setLoopbackTLSVerificationBypass(_ enabled: Bool, in app: XCUIApplication) {
+        app.activate()
+        app.typeKey(",", modifierFlags: .command)
+
+        let checkbox = app.checkBoxes["allow-insecure-loopback-tls-checkbox"].firstMatch
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 4), "The loopback TLS checkbox should exist in Settings.")
+        if checkboxIsOn(checkbox) != enabled {
+            checkbox.click()
+        }
+        XCTAssertTrue(
+            waitUntil(timeout: 2) { self.checkboxIsOn(checkbox) == enabled },
+            "The loopback TLS checkbox should be \(enabled ? "enabled" : "disabled")."
+        )
+
+        app.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(app.textFields["url-input-field"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    private func checkboxIsOn(_ checkbox: XCUIElement) -> Bool {
+        if let number = checkbox.value as? NSNumber {
+            return number.boolValue
+        }
+        guard let value = checkbox.value as? String else {
+            return false
+        }
+        return ["1", "true", "on", "selected"].contains(value.lowercased())
     }
 
     private func ensureMainWindowIsOpen(app: XCUIApplication, urlField: XCUIElement) {

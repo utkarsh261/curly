@@ -82,6 +82,20 @@ final class SidebarUITests: XCTestCase {
         XCTAssertTrue(sidebar(in: app).waitForExistence(timeout: 3))
     }
 
+    func testSettingsExposeLoopbackTLSPreference() {
+        let app = launchApp()
+        defer { app.terminate() }
+
+        app.activate()
+        app.typeKey(",", modifierFlags: .command)
+
+        let checkbox = app.checkBoxes["allow-insecure-loopback-tls-checkbox"].firstMatch
+        XCTAssertTrue(
+            checkbox.waitForExistence(timeout: 4),
+            "Curly Settings should expose the app-wide loopback TLS preference."
+        )
+    }
+
     func testHoveringAtLeftWindowEdgeDoesNotRevealCollapsedSidebar() {
         let app = launchApp()
         defer { app.terminate() }
