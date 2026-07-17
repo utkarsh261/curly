@@ -1,6 +1,6 @@
 cask "curly" do
-  version "0.1.12"
-  sha256 "aab3d26d247e0eab5860ea36b0019041b38fe7d56c1d94626a92846a5194dcf9"
+  version "0.1.13"
+  sha256 "7695ca2b376e5ce1789c4fccc6cbce31e4ff0effa63670cd2432aff390386d70"
 
   url "https://github.com/utkarsh261/curly/releases/download/v#{version}/Curly-v#{version}.dmg"
   name "Curly"
