@@ -527,6 +527,7 @@ final class URLBarImportUITests: XCTestCase {
     }
 }
 
+@MainActor
 private final class UITestLocalHTTPServer {
     private let process: Process?
 
