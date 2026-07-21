@@ -85,6 +85,8 @@ final class URLBarImportUITests: XCTestCase {
         let (app, urlField) = launchWithURLBarInput(longURL)
         defer { app.terminate() }
 
+        urlField.click()
+        urlField.typeKey(.leftArrow, modifierFlags: .command)
         urlField.scroll(byDeltaX: -500, deltaY: 0)
         urlField.typeText("X")
 
@@ -361,6 +363,137 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(app.buttons["run-button"].firstMatch.exists)
     }
 
+    func testInvalidJSONBodyShowsLocationNavigatesAndStillRuns() throws {
+        let invalidBody = """
+        {
+          "good": true,
+          "bad" nope
+        }
+        """
+        let invalidCurl = """
+        curl -X POST https://api.example.com/users \\
+          -H "Content-Type: application/json" \\
+          -d '\(invalidBody)'
+        """
+        let app = launchEmptyApp(usesStubExecutor: true)
+        defer { app.terminate() }
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(invalidCurl, into: urlField)
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { urlField.value as? String == "https://api.example.com/users" },
+            "The invalid body must not prevent the cURL request from importing."
+        )
+
+        let editor = app.textViews["request-json-body-editor-text-view"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 3), "The imported JSON body should use the JSON editor.")
+        let validationBadge = app.staticTexts["request-json-body-editor-validation-badge"].firstMatch
+        XCTAssertTrue(validationBadge.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            waitUntil(timeout: 4) { self.text(of: validationBadge).contains("Invalid JSON") },
+            "Live validation should mark the imported body invalid after the debounce."
+        )
+
+        let formatButton = app.buttons["request-json-body-editor-format"].firstMatch
+        let compactButton = app.buttons["request-json-body-editor-compact"].firstMatch
+        XCTAssertTrue(formatButton.waitForExistence(timeout: 2))
+        XCTAssertTrue(compactButton.waitForExistence(timeout: 2))
+
+        let diagnostic = app.buttons["request-json-body-editor-diagnostic"].firstMatch
+        XCTAssertTrue(diagnostic.waitForExistence(timeout: 4), "Invalid JSON should expose an inline diagnostic.")
+        XCTAssertTrue(
+            text(of: diagnostic).contains("Line 3, column 9 — Expected ':' after the object key."),
+            "The diagnostic should identify the first syntax error in the original request body. Got: \(text(of: diagnostic))"
+        )
+
+        formatButton.click()
+        XCTAssertTrue(diagnostic.exists, "Format should keep and navigate to an invalid JSON diagnostic.")
+        compactButton.click()
+        XCTAssertTrue(diagnostic.exists, "Compact should keep and navigate to an invalid JSON diagnostic.")
+
+        XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled, "Invalid JSON must not block request dispatch.")
+        triggerRun(app)
+        XCTAssertTrue(
+            waitUntil(timeout: 5) {
+                let response = app.staticTexts["response-body-text"].firstMatch
+                return response.exists && self.text(of: response).contains("body=\(invalidBody)")
+            },
+            "The request should still reach the executor when its JSON body is invalid."
+        )
+
+        diagnostic.click()
+        let validCurl = """
+        curl -X POST https://api.example.com/users \\
+          -H "Content-Type: application/json" \\
+          -d '{"good":true,"bad":null}'
+        """
+        paste(validCurl, into: urlField)
+        let replaceButton = app.sheets.buttons["Replace"].firstMatch.exists
+            ? app.sheets.buttons["Replace"].firstMatch
+            : app.dialogs.buttons["Replace"].firstMatch
+        XCTAssertTrue(replaceButton.waitForExistence(timeout: 3))
+        replaceButton.click()
+
+        XCTAssertTrue(
+            waitUntil(timeout: 4) { !diagnostic.exists },
+            "Correcting the body should clear the stale inline diagnostic."
+        )
+        XCTAssertTrue(
+            waitUntil(timeout: 4) { self.text(of: validationBadge).contains("Valid JSON") },
+            "The corrected body should validate and no stale result should return."
+        )
+    }
+
+    func testRapidJSONCorrectionCancelsStaleDiagnostic() throws {
+        let app = launchEmptyApp(usesStubExecutor: true)
+        defer { app.terminate() }
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(
+            """
+            curl -X POST https://api.example.com/users \\
+              -H "Content-Type: application/json" \\
+              -d '{"initial" nope}'
+            """,
+            into: urlField
+        )
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { urlField.value as? String == "https://api.example.com/users" }
+        )
+
+        let editor = app.textViews["request-json-body-editor-text-view"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 3))
+        let validationBadge = app.staticTexts["request-json-body-editor-validation-badge"].firstMatch
+        XCTAssertTrue(validationBadge.waitForExistence(timeout: 3))
+        let diagnostic = app.buttons["request-json-body-editor-diagnostic"].firstMatch
+        XCTAssertTrue(diagnostic.waitForExistence(timeout: 4))
+        diagnostic.click()
+
+        replaceFocusedText(#"{"ready" nope}"#, app: app)
+        let correctedBody = #"{"ready":{"nested":true}}"#
+        replaceFocusedText(correctedBody, app: app)
+
+        XCTAssertFalse(
+            waitUntil(timeout: 1) { diagnostic.exists },
+            "The cancelled validation must not publish a diagnostic for superseded text."
+        )
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { self.text(of: validationBadge).contains("Valid JSON") }
+        )
+        XCTAssertEqual(
+            urlField.value as? String,
+            "https://api.example.com/users",
+            "JSON editor typing must not modify the URL field."
+        )
+
+        triggerRun(app)
+        XCTAssertTrue(
+            waitUntil(timeout: 5) {
+                let response = app.staticTexts["response-body-text"].firstMatch
+                return response.exists && self.text(of: response).contains("body=\(correctedBody)")
+            },
+            "The final nested JSON body should be the text that reaches the executor."
+        )
+    }
+
     func testReplacingJSONCurlWorkspaceDoesNotCrash() throws {
         let app = launchEmptyApp()
         defer { app.terminate() }
@@ -419,9 +552,12 @@ final class URLBarImportUITests: XCTestCase {
         return (app, urlField)
     }
 
-    private func launchEmptyApp() -> XCUIApplication {
+    private func launchEmptyApp(usesStubExecutor: Bool = false) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-mode"]
+        if usesStubExecutor {
+            app.launchArguments.append("--ui-test-stub-executor")
+        }
         app.launch()
 
         let urlField = app.textFields["url-input-field"].firstMatch
@@ -437,6 +573,15 @@ final class URLBarImportUITests: XCTestCase {
         element.click()
         element.typeKey("a", modifierFlags: .command)
         element.typeKey("v", modifierFlags: .command)
+    }
+
+    private func replaceFocusedText(_ text: String, app: XCUIApplication) {
+        app.typeKey("a", modifierFlags: .command)
+        app.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        XCTAssertTrue(pasteboard.setString(text, forType: .string))
+        app.typeKey("v", modifierFlags: .command)
     }
 
     private func openMenuBarExtra(app: XCUIApplication) {

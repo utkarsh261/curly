@@ -1,5 +1,46 @@
 import AppKit
 
+final class JSONCodeTextView: NSTextView {
+    var diagnosticLineRange: NSRange? {
+        didSet {
+            if oldValue != diagnosticLineRange {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        guard let highlightRect = diagnosticHighlightRect()?.intersection(rect), !highlightRect.isEmpty else {
+            return
+        }
+        NSColor.systemOrange.withAlphaComponent(0.12).setFill()
+        highlightRect.fill()
+    }
+
+    func diagnosticHighlightRect() -> NSRect? {
+        guard
+            let diagnosticLineRange,
+            let layoutManager
+        else {
+            return nil
+        }
+
+        let textLength = (string as NSString).length
+        guard textLength > 0 else { return nil }
+        let characterLocation = min(diagnosticLineRange.location, textLength - 1)
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: characterLocation)
+        let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
+        let origin = textContainerOrigin
+        return NSRect(
+            x: 0,
+            y: lineRect.minY + origin.y,
+            width: max(bounds.width, visibleRect.maxX),
+            height: lineRect.height
+        )
+    }
+}
+
 final class JSONFoldingLayoutManager: NSLayoutManager {
     var foldedRanges: [NSRange] = [] {
         didSet {
@@ -52,6 +93,8 @@ final class JSONLineNumberRulerView: NSRulerView {
     var onToggleFold: ((Int) -> Void)?
     private(set) var cachedFoldStartLines: Set<Int>?
     private(set) var cachedLineMap: JSONLineMap?
+    private(set) var diagnosticLineNumber: Int?
+    private(set) var diagnosticMarkerLineNumber: Int?
 
     private weak var observedTextView: NSTextView?
     private let numberAttributes: [NSAttributedString.Key: Any] = [
@@ -62,6 +105,10 @@ final class JSONLineNumberRulerView: NSRulerView {
         .font: NSFont.systemFont(ofSize: 16, weight: .bold),
         .foregroundColor: themeAccentNS
     ]
+    private let diagnosticNumberAttributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold),
+        .foregroundColor: NSColor.systemOrange
+    ]
 
     private var coordinator: JSONCodeEditorView.Coordinator? {
         observedTextView?.delegate as? JSONCodeEditorView.Coordinator
@@ -70,6 +117,12 @@ final class JSONLineNumberRulerView: NSRulerView {
     func invalidateFoldCache() {
         cachedFoldStartLines = nil
         cachedLineMap = nil
+        needsDisplay = true
+    }
+
+    func setDiagnostic(actualLineNumber: Int?, markerLineNumber: Int?) {
+        diagnosticLineNumber = actualLineNumber
+        diagnosticMarkerLineNumber = markerLineNumber
         needsDisplay = true
     }
 
@@ -120,9 +173,12 @@ final class JSONLineNumberRulerView: NSRulerView {
             if !drawnLines.contains(lineNumber) {
                 drawnLines.insert(lineNumber)
                 let y = lineRect.minY + textView.textContainerOrigin.y - visibleRect.minY + 1
-                drawLineNumber(lineNumber + 1, y: y)
+                drawLineNumber(lineNumber + 1, y: y, isDiagnostic: diagnosticLineNumber == lineNumber)
                 if foldStartLines.contains(lineNumber) {
                     drawFoldMarker(y: y)
+                }
+                if diagnosticMarkerLineNumber == lineNumber {
+                    drawDiagnosticMarker(y: y)
                 }
             }
 
@@ -164,16 +220,22 @@ final class JSONLineNumberRulerView: NSRulerView {
         onToggleFold?(lineNumber)
     }
 
-    private func drawLineNumber(_ lineNumber: Int, y: CGFloat) {
+    private func drawLineNumber(_ lineNumber: Int, y: CGFloat, isDiagnostic: Bool) {
+        let attributes = isDiagnostic ? diagnosticNumberAttributes : numberAttributes
         let text = "\(lineNumber)" as NSString
-        let size = text.size(withAttributes: numberAttributes)
+        let size = text.size(withAttributes: attributes)
         text.draw(
             at: NSPoint(x: ruleThickness - size.width - 7, y: y),
-            withAttributes: numberAttributes
+            withAttributes: attributes
         )
     }
 
     private func drawFoldMarker(y: CGFloat) {
         ("▾" as NSString).draw(at: NSPoint(x: 7, y: y), withAttributes: foldAttributes)
+    }
+
+    private func drawDiagnosticMarker(y: CGFloat) {
+        NSColor.systemOrange.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 2, y: y + 5, width: 4, height: 4)).fill()
     }
 }
