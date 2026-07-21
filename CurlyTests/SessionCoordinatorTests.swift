@@ -521,7 +521,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(invocations[1].urlString, "https://example.com/original")
     }
 
-    func testRunPreservesRawResponseModeAcrossJSONResponses() async {
+    func testNewJSONResponseOpensInPrettyModeAfterPreviousResponseWasSetToRaw() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(
             requestExecutor: executor,
@@ -553,17 +553,18 @@ final class SessionCoordinatorTests: XCTestCase {
         await executor.resumeSuccess(
             ExecutedResponse(
                 request: request,
-                statusCode: 200,
+                statusCode: 500,
                 headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
-                bodyData: Data("{\"next\":true}".utf8),
+                bodyData: Data("{\"error\":\"server failure\"}".utf8),
                 mimeType: "application/json",
                 duration: 0.01,
                 timestamp: Date(timeIntervalSince1970: 101)
             )
         )
-        await waitUntil { coordinator.state.visibleResponseState?.body.bodyText == "{\"next\":true}" }
+        await waitUntil { coordinator.state.visibleResponseState?.summary.statusCode == 500 }
 
-        XCTAssertEqual(coordinator.state.currentResponseMode, .raw)
+        XCTAssertNotNil(coordinator.state.responseJSONValue)
+        XCTAssertEqual(coordinator.state.currentResponseMode, .tree)
     }
 
     func testTreeModeFallsBackToRawForNonJSONResponse() async {

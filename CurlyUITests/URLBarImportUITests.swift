@@ -290,6 +290,24 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5))
     }
 
+    func testJSONServerErrorOpensInPrettyMode() async throws {
+        let server = try await UITestLocalHTTPServer.start()
+        defer { server.stop() }
+
+        let (app, _) = launchWithURLBarInput("http://127.0.0.1:9999/status/500")
+        defer { app.terminate() }
+
+        triggerRun(app)
+
+        XCTAssertTrue(
+            app.scrollViews["response-json-pretty"].waitForExistence(timeout: 5),
+            "A JSON response should open in Pretty mode even when the server returns an error status."
+        )
+        let responseStatus = app.staticTexts["response-status-value"].firstMatch
+        XCTAssertTrue(responseStatus.waitForExistence(timeout: 3))
+        XCTAssertEqual(text(of: responseStatus), "500")
+    }
+
     func testSettingsToggleAllowsLoopbackTLSRequestEndToEnd() throws {
         let url = "https://localhost:9443/json"
         let (app, urlField) = launchWithURLBarInput(url)

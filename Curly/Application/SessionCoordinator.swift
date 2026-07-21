@@ -715,7 +715,6 @@ final class SessionCoordinator: ObservableObject {
         globalPostResponseScriptState = automation.postResponseScript.isEnabled ? .ready : .off
         globalVisibleResponseState = nil
         
-        let previousResponseMode = state.visibleResponseState?.selectedMode
         let runningRequestID = selectedSavedRequestID
 
         currentRunTask = Task { [requestExecutor, responseFormatter, scriptRunner] in
@@ -743,9 +742,6 @@ final class SessionCoordinator: ObservableObject {
                 let formattedResponse = await responseFormatter.format(executedResponse)
                 guard !Task.isCancelled, self.activeRunID == runID else { return }
                 var visibleResponseState = formattedResponse
-                if let previousResponseMode, previousResponseMode == .raw || visibleResponseState.body.jsonValue != nil {
-                    visibleResponseState.selectedMode = previousResponseMode
-                }
                 visibleResponseState.isStale = self.currentRequestDiffers(from: request)
                 self.publishHTTPResponse(
                     visibleResponseState,
