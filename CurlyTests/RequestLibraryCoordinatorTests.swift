@@ -80,7 +80,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
 
     func testDuplicateUsesCurrentDraftAndKeepsSourceDirty() async {
         let coordinator = makeCoordinator()
-        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+        await waitUntil { coordinator.hasCompletedInitialLibraryLoad }
 
         coordinator.updateWorkspaceName("Req A")
         coordinator.setURL("https://api.example.com/a")
@@ -93,6 +93,8 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         }
 
         coordinator.setURL("https://api.example.com/a-draft")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"copy\", \"yes\");")
         XCTAssertTrue(coordinator.state.isCurrentRequestDirty)
 
         coordinator.duplicateSelectedRequest()
@@ -103,6 +105,10 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         }
         XCTAssertNotEqual(sourceID, duplicateID)
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/a-draft")
+        XCTAssertEqual(
+            coordinator.state.requestAutomation.postResponseScript,
+            PostResponseScript(isEnabled: true, source: "curly.variables.global.set(\"copy\", \"yes\");")
+        )
         XCTAssertFalse(coordinator.state.isCurrentRequestDirty)
 
         let sourceRow = coordinator.state.requestListItems.first { $0.id == sourceID }
@@ -151,10 +157,13 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
 
             coordinator.updateWorkspaceName("Persisted")
             coordinator.setURL("https://api.example.com/base")
+            coordinator.setPostResponseScriptEnabled(true)
+            coordinator.setPostResponseScriptSource("curly.variables.global.set(\"version\", \"saved\");")
             coordinator.saveCurrentRequest()
             await waitUntil("saved request creation") { coordinator.state.requestListItems.count == 1 }
 
             coordinator.setURL("https://api.example.com/draft")
+            coordinator.setPostResponseScriptSource("curly.variables.global.set(\"version\", \"draft\");")
             XCTAssertTrue(coordinator.state.isCurrentRequestDirty)
 
             await coordinator.waitForPendingPersistence()
@@ -166,6 +175,11 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(relaunchedCoordinator.state.selectedRequestContext, .saved)
         XCTAssertEqual(relaunchedCoordinator.state.workspaceName, "Persisted")
         XCTAssertEqual(relaunchedCoordinator.state.workspaceRequest.urlString, "https://api.example.com/draft")
+        XCTAssertEqual(
+            relaunchedCoordinator.state.requestAutomation.postResponseScript,
+            PostResponseScript(isEnabled: true, source: "curly.variables.global.set(\"version\", \"draft\");")
+        )
+        XCTAssertNotEqual(relaunchedCoordinator.state.postResponseScriptState.status, .off)
         XCTAssertTrue(relaunchedCoordinator.state.isCurrentRequestDirty)
     }
 

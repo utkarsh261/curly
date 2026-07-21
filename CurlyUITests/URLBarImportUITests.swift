@@ -559,7 +559,11 @@ private final class UITestLocalHTTPServer {
         }
 
         process.terminate()
-        throw XCTSkip("Local test server did not become reachable on http://localhost:9999.")
+        throw NSError(
+            domain: "CurlyUITests.LocalHTTPTestServer",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Local test server did not become reachable on http://localhost:9999."]
+        )
     }
 
     func stop() {

@@ -33,6 +33,14 @@ test-unit-ci:
 test-ui:
     zsh CurlyTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:CurlyUITests
 
+# Run the real post-response engine unit tests and its complete UI automation.
+test-scripting:
+    zsh CurlyTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:CurlyTests/PostResponseScriptingTests -only-testing:CurlyTests/SessionCoordinatorTests/testInvalidPostResponseScriptBlocksHTTPRequest -only-testing:CurlyTests/SessionCoordinatorTests/testPostResponseScriptCommitsVariablesAfterHTTPResponse -only-testing:CurlyTests/SessionCoordinatorTests/testScriptFailureRollsBackWritesAndPreservesHTTPStatus -only-testing:CurlyTests/SessionCoordinatorTests/testTransportFailureDoesNotExecutePostResponseScript -only-testing:CurlyUITests/PostResponseScriptsUITests
+
+# Verify the pinned QuickJS-NG source and license bytes.
+verify-quickjs-vendor:
+    cd CurlyQuickJS && shasum -a 256 -c SHA256SUMS
+
 # Run a single XCTest selector.
 test-one selector:
     zsh CurlyTests/run_with_test_server.sh xcodebuild -project {{project}} -scheme {{scheme}} -configuration {{configuration}} -sdk {{sdk}} -derivedDataPath {{derived_data}} test -only-testing:{{selector}}

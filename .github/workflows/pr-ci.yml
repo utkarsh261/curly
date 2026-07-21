@@ -21,8 +21,14 @@ jobs:
       - name: Install dependencies
         run: brew install just
 
+      - name: Verify vendored QuickJS-NG
+        run: just verify-quickjs-vendor
+
       - name: Build
         run: just build
 
       - name: Run unit tests
         run: just test-unit-ci
+
+      - name: Run post-response script UI automation
+        run: just test-scripting

@@ -263,6 +263,22 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.canRun)
     }
 
+    func testCurlImportReplacesOnlyRequestAndPreservesPostResponseScript() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://before.example.com")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"token\", \"kept\");")
+
+        coordinator.handleURLBarPaste("curl https://after.example.com")
+        coordinator.confirmWorkspaceReplacement()
+
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://after.example.com")
+        XCTAssertEqual(
+            coordinator.state.requestAutomation.postResponseScript,
+            PostResponseScript(isEnabled: true, source: "curly.variables.global.set(\"token\", \"kept\");")
+        )
+    }
+
     func testWarningClearsWhenRequestIsEdited() {
         let coordinator = SessionCoordinator()
 
@@ -864,6 +880,286 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.state.isVariablesModalPresented)
     }
 
+    func testInvalidPostResponseScriptBlocksHTTPRequest() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/data")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("const = ;")
+
+        coordinator.runCurrentRequest()
+
+        await waitUntil { coordinator.state.executionState == .failed }
+        let invocationCount = await executor.invocationCount
+        XCTAssertEqual(invocationCount, 0)
+        XCTAssertEqual(coordinator.state.postResponseScriptState.status, .invalid)
+        XCTAssertNotNil(coordinator.state.postResponseScriptState.diagnostic)
+        XCTAssertNil(coordinator.state.visibleResponseState)
+    }
+
+    func testPostResponseScriptCommitsVariablesAfterHTTPResponse() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/token")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("""
+            const body = curly.response.json();
+            curly.variables.global.set("token", body.token);
+            console.log("saved", body.token);
+            """)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 201,
+            headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
+            bodyData: Data(#"{"token":"next"}"#.utf8),
+            mimeType: "application/json",
+            duration: 0.02,
+            timestamp: Date()
+        ))
+
+        await waitUntil {
+            let status = coordinator.state.postResponseScriptState.status
+            return status == .passed || status == .failed || status == .invalid
+        }
+        XCTAssertEqual(
+            coordinator.state.postResponseScriptState.status,
+            .passed,
+            [
+                coordinator.state.postResponseScriptState.diagnostic?.message ?? "No diagnostic",
+                coordinator.state.postResponseScriptState.logs.map(\.text).joined(separator: " | ")
+            ].joined(separator: " — ")
+        )
+        XCTAssertEqual(coordinator.state.executionState, .succeeded)
+        XCTAssertEqual(coordinator.state.responseSummaryStatusValue, "201")
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().first(where: { $0.name == "token" })?.value, "next")
+        XCTAssertEqual(coordinator.state.postResponseScriptState.changedVariableCount, 1)
+        XCTAssertTrue(coordinator.state.postResponseScriptState.logs.first?.text.contains("saved next") == true)
+    }
+
+    func testScriptUpdatedGlobalVariableIsResolvedByNextRequest() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/session")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(
+            "curly.variables.global.set(\"session_id\", curly.response.json().sessionID);"
+        )
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let firstRequest = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: firstRequest,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(#"{"sessionID":"abc-123"}"#.utf8),
+            mimeType: "application/json",
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+
+        coordinator.setPostResponseScriptEnabled(false)
+        coordinator.setURL("https://example.com/sessions/{{session_id}}")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+
+        let secondRequest = await executor.invocations[1]
+        XCTAssertEqual(secondRequest.urlString, "https://example.com/sessions/abc-123")
+        await executor.resumeFailure(ExecutionError.transport("test complete"))
+    }
+
+    func testRerunOfUnsavedRequestKeepsPostResponseAutomation() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let scriptRunner = RecordingScriptRunner()
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter(),
+            scriptRunner: scriptRunner
+        )
+        coordinator.setURL("https://example.com/rerun-script")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("console.log(\"rerun\");")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let firstRequest = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: firstRequest,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil {
+            await scriptRunner.runCount == 1 && coordinator.state.postResponseScriptState.status == .passed
+        }
+
+        coordinator.rerunLastRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        let rerunRequest = await executor.invocations[1]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: rerunRequest,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+
+        await waitUntil { await scriptRunner.runCount == 2 }
+        XCTAssertEqual(rerunRequest.urlString, "https://example.com/rerun-script")
+    }
+
+    func testScriptFailureRollsBackWritesAndPreservesHTTPStatus() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "before", scope: .global))
+        coordinator.setURL("https://example.com/token")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("""
+            curly.variables.global.set("token", "after");
+            throw new Error("do not commit");
+            """)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 422,
+            headers: [],
+            bodyData: Data("error".utf8),
+            mimeType: "text/plain",
+            duration: 0.02,
+            timestamp: Date()
+        ))
+
+        await waitUntil { coordinator.state.postResponseScriptState.status == .failed }
+        XCTAssertEqual(coordinator.state.executionState, .succeeded)
+        XCTAssertEqual(coordinator.state.responseSummaryStatusValue, "422")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.summary.statusCode, 422)
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().first(where: { $0.name == "token" })?.value, "before")
+        XCTAssertTrue(coordinator.state.postResponseScriptState.diagnostic?.message.contains("do not commit") == true)
+    }
+
+    func testTransportFailureDoesNotExecutePostResponseScript() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let scriptRunner = RecordingScriptRunner()
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter(),
+            scriptRunner: scriptRunner
+        )
+        coordinator.setURL("https://example.com/failure")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"token\", \"x\");")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        await executor.resumeFailure(ExecutionError.transport("offline"))
+        await waitUntil { coordinator.state.executionState == .failed }
+
+        let runCount = await scriptRunner.runCount
+        XCTAssertEqual(runCount, 0)
+        XCTAssertEqual(coordinator.state.postResponseScriptState.status, .ready)
+        XCTAssertEqual(coordinator.state.inlineErrorMessage, "offline")
+    }
+
+    func testEditingScriptDuringRunUsesCapturedSourceAndMarksResultStale() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let scriptRunner = ControlledScriptRunner()
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter(),
+            scriptRunner: scriptRunner
+        )
+        coordinator.setURL("https://example.com/stale-script")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"source\", \"captured\");")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { await scriptRunner.runCount == 1 }
+
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"source\", \"edited\");")
+        await scriptRunner.resume(.passed(writes: [
+            ScriptVariableWrite(scope: .global, name: "source", value: "captured")
+        ]))
+
+        await waitUntil { coordinator.state.postResponseScriptState.status == .stale }
+        XCTAssertEqual(coordinator.state.executionState, .succeeded)
+        XCTAssertEqual(coordinator.state.responseSummaryStatusValue, "200")
+        XCTAssertEqual(coordinator.listVariablesForCurrentContext().first { $0.name == "source" }?.value, "captured")
+
+        coordinator.setPostResponseScriptSource("console.log(\"edited again\");")
+        try? await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(coordinator.state.postResponseScriptState.status, .stale)
+    }
+
+    func testStartingNewWorkspaceCancelsRunningScriptWithoutCommittingWrites() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let scriptRunner = ControlledScriptRunner()
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter(),
+            scriptRunner: scriptRunner
+        )
+        coordinator.setURL("https://example.com/cancel-script")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("curly.variables.global.set(\"cancelled\", \"no\");")
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { await scriptRunner.runCount == 1 }
+
+        coordinator.newWorkspace()
+
+        await waitUntil { await scriptRunner.cancellationCount == 1 }
+        XCTAssertEqual(coordinator.state.workspaceRequest, .empty)
+        XCTAssertEqual(coordinator.state.postResponseScriptState.status, .off)
+        XCTAssertNil(coordinator.listVariablesForCurrentContext().first { $0.name == "cancelled" })
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 1,
         condition: @escaping @MainActor () async -> Bool
@@ -876,6 +1172,81 @@ final class SessionCoordinatorTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Condition not met within \(timeout) seconds")
+    }
+}
+
+private actor RecordingScriptRunner: PostResponseScriptRunning {
+    private(set) var runCount = 0
+
+    func validate(source: String) async -> ScriptValidationResult {
+        .valid
+    }
+
+    func run(_ input: PostResponseScriptInput) async -> PostResponseScriptRunResult {
+        runCount += 1
+        return PostResponseScriptRunResult(
+            outcome: .passed,
+            diagnostic: nil,
+            durationMs: 0,
+            writes: [],
+            logs: [],
+            logsWereTruncated: false
+        )
+    }
+}
+
+private actor ControlledScriptRunner: PostResponseScriptRunning {
+    enum Completion {
+        case passed(writes: [ScriptVariableWrite])
+    }
+
+    private(set) var runCount = 0
+    private(set) var cancellationCount = 0
+    private var continuation: CheckedContinuation<PostResponseScriptRunResult, Never>?
+
+    func validate(source: String) async -> ScriptValidationResult {
+        .valid
+    }
+
+    func run(_ input: PostResponseScriptInput) async -> PostResponseScriptRunResult {
+        runCount += 1
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { await self.cancelPendingRun() }
+        }
+    }
+
+    func resume(_ completion: Completion) {
+        guard let continuation else { return }
+        self.continuation = nil
+        switch completion {
+        case .passed(let writes):
+            continuation.resume(returning: PostResponseScriptRunResult(
+                outcome: .passed,
+                diagnostic: nil,
+                durationMs: 1,
+                writes: writes,
+                logs: [],
+                logsWereTruncated: false
+            ))
+        }
+    }
+
+    private func cancelPendingRun() {
+        guard let continuation else { return }
+        self.continuation = nil
+        cancellationCount += 1
+        continuation.resume(returning: PostResponseScriptRunResult(
+            outcome: .cancelled,
+            diagnostic: nil,
+            durationMs: 0,
+            writes: [],
+            logs: [],
+            logsWereTruncated: false
+        ))
     }
 }
 

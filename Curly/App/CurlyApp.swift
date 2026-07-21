@@ -111,7 +111,7 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
         }
 
         Task {
-            await coordinator.flushSelectionState()
+            await coordinator.prepareForTermination()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

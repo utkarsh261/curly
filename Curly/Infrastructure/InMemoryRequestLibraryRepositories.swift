@@ -122,6 +122,54 @@ actor InMemoryVariableRepository: VariableRepository {
             variablesByID[id] = migrated
         }
     }
+
+    func applyVariableBatch(_ batch: VariableBatch) async throws -> VariableBatchCommit {
+        var candidate = variablesByID
+        var changed: [Variable] = []
+
+        for mutation in batch.mutations {
+            if let existing = candidate.values.first(where: { $0.name == mutation.name }) {
+                guard existing.scope == mutation.scope,
+                      existing.requestID == mutation.requestID else {
+                    throw VariableBatchError.scopeConflict(mutation.name)
+                }
+                guard existing.value != mutation.value else { continue }
+                var updated = existing
+                updated.value = mutation.value
+                updated.updatedAt = batch.committedAt
+                candidate[updated.id] = updated
+                changed.append(updated)
+            } else {
+                let created = Variable(
+                    name: mutation.name,
+                    value: mutation.value,
+                    scope: mutation.scope,
+                    requestID: mutation.requestID,
+                    createdAt: batch.committedAt,
+                    updatedAt: batch.committedAt
+                )
+                candidate[created.id] = created
+                changed.append(created)
+            }
+        }
+
+        variablesByID = candidate
+        return VariableBatchCommit(changedVariables: changed)
+    }
+}
+
+enum VariableBatchError: LocalizedError, Equatable {
+    case scopeConflict(String)
+    case missingRequestOwner
+
+    var errorDescription: String? {
+        switch self {
+        case .scopeConflict(let name):
+            return "Variable \(name) already exists in another scope."
+        case .missingRequestOwner:
+            return "A request-scoped variable needs a saved request or draft."
+        }
+    }
 }
 
 struct InMemoryWorkspaceRepositoryFacade: WorkspaceRepositoryFacade {

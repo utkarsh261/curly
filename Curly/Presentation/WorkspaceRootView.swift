@@ -927,6 +927,7 @@ private struct RequestEditorAccordion: View {
     let onToggle: (RequestEditorSection) -> Void
     let onAddHeader: () -> Void
     @State private var foldedRanges: [NSRange] = []
+    @State private var isScriptAPIReferencePresented = false
 
     var body: some View {
         PanelCard(padding: 14, cornerRadius: 16) {
@@ -957,6 +958,21 @@ private struct RequestEditorAccordion: View {
 
                 if expansion.bodyExpanded {
                     bodyContent
+                }
+
+                Divider()
+
+                accordionRow(
+                    title: "Post-response script",
+                    icon: "terminal",
+                    metadata: scriptStatusTitle,
+                    isExpanded: expansion.postResponseScriptExpanded
+                ) {
+                    onToggle(.postResponseScript)
+                }
+
+                if expansion.postResponseScriptExpanded {
+                    postResponseScriptContent
                 }
             }
         }
@@ -1062,6 +1078,227 @@ private struct RequestEditorAccordion: View {
                 }
             }
             .frame(maxHeight: .infinity)
+        }
+    }
+
+    private var postResponseScriptContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Toggle(
+                    "Run after every HTTP response",
+                    isOn: Binding(
+                        get: { coordinator.state.requestAutomation.postResponseScript.isEnabled },
+                        set: { coordinator.setPostResponseScriptEnabled($0) }
+                    )
+                )
+                .toggleStyle(.checkbox)
+                .accessibilityIdentifier("post-response-script-enabled")
+
+                Spacer()
+
+                Button {
+                    isScriptAPIReferencePresented.toggle()
+                } label: {
+                    Label("API", systemImage: "book.closed")
+                }
+                .buttonStyle(.borderless)
+                .controlSize(.small)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.textMuted)
+                .help("Show the post-response script API")
+                .accessibilityIdentifier("post-response-script-api-button")
+                .popover(isPresented: $isScriptAPIReferencePresented, arrowEdge: .top) {
+                    scriptAPIReference
+                }
+            }
+
+            Text("Use JavaScript to read the response and atomically update string variables. Scripts do not run for request validation or transport failures.")
+                .font(.caption)
+                .foregroundStyle(Color.textMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            JavaScriptCodeEditorView(
+                text: Binding(
+                    get: { coordinator.state.requestAutomation.postResponseScript.source },
+                    set: { coordinator.setPostResponseScriptSource($0) }
+                ),
+                isEditable: coordinator.state.requestAutomation.postResponseScript.isEnabled,
+                accessibilityIdentifier: "post-response-script-editor"
+            )
+            .frame(minHeight: 220)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.7), lineWidth: 1)
+            )
+            .accessibilityLabel("Post-response JavaScript")
+
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(scriptStatusColor)
+                    .frame(width: 7, height: 7)
+                Text(scriptStatusTitle)
+                    .font(.caption.weight(.semibold))
+                if let duration = coordinator.state.postResponseScriptState.durationMs {
+                    Text("\(duration) ms")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.textMuted)
+                }
+                if coordinator.state.postResponseScriptState.status == .passed {
+                    Text("\(coordinator.state.postResponseScriptState.changedVariableCount) changed")
+                        .font(.caption)
+                        .foregroundStyle(Color.textMuted)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("post-response-script-status")
+
+            if let diagnostic = coordinator.state.postResponseScriptState.diagnostic {
+                Text(scriptDiagnosticText(diagnostic))
+                    .font(.caption.monospaced())
+                    .foregroundStyle(Color.red)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("post-response-script-diagnostic")
+            }
+
+            if !coordinator.state.postResponseScriptState.logs.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Console")
+                        .font(.caption.weight(.semibold))
+                    ForEach(coordinator.state.postResponseScriptState.logs) { entry in
+                        Text(entry.text)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(logColor(entry.level))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .accessibilityIdentifier("post-response-script-console")
+            }
+        }
+        .transition(.opacity)
+    }
+
+    private var scriptAPIReference: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Script API", systemImage: "book.closed")
+                .font(.headline)
+
+            scriptAPISection(
+                title: "Response",
+                entries: [
+                    "curly.response.status",
+                    "curly.response.ok",
+                    "curly.response.header(name)",
+                    "curly.response.text()",
+                    "curly.response.json()"
+                ]
+            )
+
+            scriptAPISection(
+                title: "Variables",
+                entries: [
+                    "curly.variables.get(name)",
+                    "curly.variables.global.set(name, value)",
+                    "curly.variables.request.set(name, value)"
+                ]
+            )
+
+            scriptAPISection(
+                title: "Console",
+                entries: [
+                    "console.log(value)",
+                    "console.warn(value)",
+                    "console.error(value)"
+                ]
+            )
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Example")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.textMuted)
+                Text("let body = curly.response.json();")
+                Text("curly.variables.global.set(\"token\", body.auth.token);")
+            }
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+
+            Text("Synchronous · 1 second limit · writes are atomic and stored as strings")
+                .font(.caption2)
+                .foregroundStyle(Color.textMuted)
+        }
+        .padding(16)
+        .frame(width: 470, alignment: .leading)
+        .accessibilityIdentifier("post-response-script-api-reference")
+    }
+
+    private func scriptAPISection(title: String, entries: [String]) -> some View {
+        HStack(alignment: .top, spacing: 16) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.textMuted)
+                .frame(width: 68, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(entries, id: \.self) { entry in
+                    Text(entry)
+                }
+            }
+            .font(.caption.monospaced())
+            .textSelection(.enabled)
+        }
+    }
+
+    private var scriptStatusTitle: String {
+        switch coordinator.state.postResponseScriptState.status {
+        case .off: return "Off"
+        case .ready: return "Ready"
+        case .invalid: return "Invalid"
+        case .running: return "Running"
+        case .passed: return "Passed"
+        case .failed: return "Failed"
+        case .stale: return "Stale"
+        }
+    }
+
+    private var scriptStatusColor: Color {
+        switch coordinator.state.postResponseScriptState.status {
+        case .passed: return .green
+        case .invalid, .failed: return .red
+        case .stale: return .orange
+        case .running: return Color.accent
+        case .off, .ready: return Color.textMuted
+        }
+    }
+
+    private func scriptDiagnosticText(_ diagnostic: ScriptDiagnostic) -> String {
+        let location: String
+        if let line = diagnostic.line, let column = diagnostic.column {
+            location = "Line \(line), column \(column): "
+        } else if let line = diagnostic.line {
+            location = "Line \(line): "
+        } else {
+            location = ""
+        }
+        return location + diagnostic.message
+    }
+
+    private func logColor(_ level: ScriptLogLevel) -> Color {
+        switch level {
+        case .info: return .primary
+        case .warning: return .orange
+        case .error: return .red
         }
     }
 }

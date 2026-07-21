@@ -17,13 +17,17 @@ final class SessionCoordinator: ObservableObject {
         var lastExecutedRequest: LastExecutedRequest?
         var executionState: ExecutionState
         var visibleResponseState: VisibleResponseState?
+        var postResponseScriptState: PostResponseScriptState
     }
 
     private let curlImporter: CurlImporting
     private let requestExecutor: RequestExecuting
     private let responseFormatter: ResponseFormatting
+    private let scriptRunner: PostResponseScriptRunning
     private let requestLibrary: RequestLibraryDependencies?
     private var currentRunTask: Task<Void, Never>?
+    private var scriptValidationTask: Task<Void, Never>?
+    private var activeRunID: UUID?
     private var savedRequestsByID: [UUID: SavedRequest] = [:]
     private var draftsByRequestID: [UUID: RequestDraft] = [:]
     private var summariesByRequestID: [UUID: ExecutionSummary] = [:]
@@ -55,6 +59,7 @@ final class SessionCoordinator: ObservableObject {
         curlImporter: CurlImporting = SimpleCurlImporter(),
         requestExecutor: RequestExecuting = URLSessionRequestExecutor(),
         responseFormatter: ResponseFormatting = DefaultResponseFormatter(),
+        scriptRunner: PostResponseScriptRunning = QuickJSPostResponseScriptRunner(),
         requestLibrary: RequestLibraryDependencies? = nil
     ) {
         self.state = initialState
@@ -65,6 +70,7 @@ final class SessionCoordinator: ObservableObject {
         self.curlImporter = curlImporter
         self.requestExecutor = requestExecutor
         self.responseFormatter = responseFormatter
+        self.scriptRunner = scriptRunner
         self.requestLibrary = requestLibrary
         if requestLibrary != nil {
             Task { await self.loadRequestLibraryState() }
@@ -78,10 +84,12 @@ final class SessionCoordinator: ObservableObject {
             createOrFocusHiddenNewDraft()
             return
         }
-        currentRunTask?.cancel()
-        currentRunTask = nil
+        cancelActiveRun()
+        scriptValidationTask?.cancel()
         state.workspaceRequest = .empty
         state.workspaceName = "Untitled Request"
+        state.requestAutomation = .none
+        state.postResponseScriptState = .off
         state.requestEditorExpansion = .allExpanded
         state.lastExecutedRequest = nil
         state.executionState = .idle
@@ -131,6 +139,13 @@ final class SessionCoordinator: ObservableObject {
         await persistSelectionStateNow()
     }
 
+    func prepareForTermination() async {
+        cancelActiveRun()
+        scriptValidationTask?.cancel()
+        scriptValidationTask = nil
+        await flushSelectionState()
+    }
+
     func setMethod(_ method: HTTPMethod) {
         guard state.workspaceRequest.method != method else { return }
         state.workspaceRequest.method = method
@@ -157,6 +172,36 @@ final class SessionCoordinator: ObservableObject {
         state.workspaceRequest.body = body
         clearInlineMessage()
         markResultStaleIfNeeded()
+        persistDraftStateAfterEdit()
+    }
+
+    func setPostResponseScriptEnabled(_ isEnabled: Bool) {
+        guard state.requestAutomation.postResponseScript.isEnabled != isEnabled else { return }
+        state.requestAutomation.postResponseScript.isEnabled = isEnabled
+        state.postResponseScriptState = isEnabled ? .ready : .off
+        clearInlineMessage()
+        persistDraftStateAfterEdit()
+        if isEnabled {
+            validateCurrentPostResponseScript()
+        } else {
+            scriptValidationTask?.cancel()
+            scriptValidationTask = nil
+        }
+    }
+
+    func setPostResponseScriptSource(_ source: String) {
+        guard state.requestAutomation.postResponseScript.source != source else { return }
+        state.requestAutomation.postResponseScript.source = source
+        if state.requestAutomation.postResponseScript.isEnabled {
+            if state.postResponseScriptState.status == .passed
+                || state.postResponseScriptState.status == .failed
+                || state.postResponseScriptState.status == .stale {
+                state.postResponseScriptState.status = .stale
+            } else if state.postResponseScriptState.status != .running {
+                state.postResponseScriptState = .ready
+            }
+            validateCurrentPostResponseScript()
+        }
         persistDraftStateAfterEdit()
     }
 
@@ -257,13 +302,23 @@ final class SessionCoordinator: ObservableObject {
             recordPreflightFailure(result.errorMessage ?? "The request is not runnable yet.")
             return
         }
-        startExecution(using: resolvedRequest)
+        startExecution(
+            using: resolvedRequest,
+            automation: state.requestAutomation,
+            variables: listVariablesForCurrentContext(),
+            variableOwnerID: currentVariableOwnerID()
+        )
     }
 
     func rerunLastRequest() {
         guard let requestID = globalLastExecutedRequestID else {
             guard let request = globalLastExecutedRequest?.request else { return }
-            startExecution(using: request)
+            startExecution(
+                using: request,
+                automation: state.requestAutomation,
+                variables: listVariablesForCurrentContext(),
+                variableOwnerID: currentVariableOwnerID()
+            )
             return
         }
         selectSavedRequest(id: requestID)
@@ -390,6 +445,7 @@ final class SessionCoordinator: ObservableObject {
             return
         }
         
+        cancelActiveRun()
         cacheCurrentResponseState()
         
         let newID = UUID()
@@ -423,6 +479,7 @@ final class SessionCoordinator: ObservableObject {
         }
         guard savedRequestsByID[id] != nil else { return }
         
+        cancelActiveRun()
         cacheCurrentResponseState()
         
         selectedContext = .saved
@@ -438,7 +495,11 @@ final class SessionCoordinator: ObservableObject {
     func saveCurrentRequest() {
         guard let requestLibrary else { return }
         let now = Date()
-        let snapshot = EditableRequestSnapshot(name: normalizedWorkspaceName(), request: state.workspaceRequest)
+        let snapshot = EditableRequestSnapshot(
+            name: normalizedWorkspaceName(),
+            request: state.workspaceRequest,
+            automation: state.requestAutomation
+        )
 
         switch selectedContext {
         case .saved:
@@ -446,6 +507,7 @@ final class SessionCoordinator: ObservableObject {
             var updated = existing
             updated.name = snapshot.name
             updated.request = snapshot.request
+            updated.automation = snapshot.automation
             updated.updatedAt = now
             updated.lastEditedAt = now
             updated.nameWasManuallyEdited = true
@@ -466,7 +528,8 @@ final class SessionCoordinator: ObservableObject {
                 createdAt: now,
                 updatedAt: now,
                 lastEditedAt: now,
-                nameWasManuallyEdited: true
+                nameWasManuallyEdited: true,
+                automation: snapshot.automation
             )
             savedRequestsByID[newSaved.id] = newSaved
             hiddenNewDraft = nil
@@ -510,6 +573,9 @@ final class SessionCoordinator: ObservableObject {
 
     func deleteSavedRequest(id: UUID) {
         guard let requestLibrary else { return }
+        if selectedSavedRequestID == id || globalLastExecutedRequestID == id {
+            cancelActiveRun()
+        }
         savedRequestsByID[id] = nil
         draftsByRequestID[id] = nil
         summariesByRequestID[id] = nil
@@ -552,6 +618,8 @@ final class SessionCoordinator: ObservableObject {
         if selectedContext == .saved, selectedSavedRequestID == id {
             state.workspaceRequest = saved.request
             state.workspaceName = saved.name
+            state.requestAutomation = saved.automation
+            state.postResponseScriptState = saved.automation.postResponseScript.isEnabled ? .ready : .off
             clearInlineMessage()
         }
         enqueuePersistenceTask(errorPrefix: "Failed to revert draft") {
@@ -571,13 +639,16 @@ final class SessionCoordinator: ObservableObject {
             createdAt: now,
             updatedAt: now,
             lastEditedAt: now,
-            nameWasManuallyEdited: false
+            nameWasManuallyEdited: false,
+            automation: source.automation
         )
         savedRequestsByID[duplicate.id] = duplicate
         selectedSavedRequestID = duplicate.id
         selectedContext = .saved
         state.workspaceRequest = duplicate.request
         state.workspaceName = duplicate.name
+        state.requestAutomation = duplicate.automation
+        state.postResponseScriptState = duplicate.automation.postResponseScript.isEnabled ? .ready : .off
         enqueuePersistenceTask(errorPrefix: "Failed to duplicate request") {
             try await requestLibrary.savedRequests.upsert(duplicate)
         }
@@ -607,7 +678,12 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
-    private func startExecution(using request: Request) {
+    private func startExecution(
+        using request: Request,
+        automation: RequestAutomation,
+        variables: [Variable],
+        variableOwnerID: UUID?
+    ) {
         guard currentRunTask == nil, state.executionState != .running else {
             return
         }
@@ -617,7 +693,12 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
+        let runID = UUID()
+        activeRunID = runID
+        scriptValidationTask?.cancel()
+        scriptValidationTask = nil
         state.executionState = .running
+        state.postResponseScriptState = automation.postResponseScript.isEnabled ? .ready : .off
         clearInlineMessage()
         state.lastExecutedRequest = LastExecutedRequest(request: request)
         
@@ -630,90 +711,362 @@ final class SessionCoordinator: ObservableObject {
         let previousResponseMode = state.visibleResponseState?.selectedMode
         let runningRequestID = selectedSavedRequestID
 
-        currentRunTask = Task { [requestExecutor, responseFormatter] in
-            do {
-                let executedResponse = try await requestExecutor.execute(request)
-                let formattedResponse = await responseFormatter.format(executedResponse)
-                await MainActor.run {
-                    var visibleResponseState = formattedResponse
-                    if let previousResponseMode, previousResponseMode == .raw || visibleResponseState.body.jsonValue != nil {
-                        visibleResponseState.selectedMode = previousResponseMode
-                    }
-                    visibleResponseState.isStale = self.currentRequestDiffers(from: request)
-                    
-                    let execState = RequestExecutionState(
-                        lastExecutedRequest: LastExecutedRequest(request: request),
-                        executionState: .succeeded,
-                        visibleResponseState: visibleResponseState
-                    )
-                    
-                    if let runningRequestID {
-                        self.executionStatesByRequestID[runningRequestID] = execState
-                    }
-                    
-                    self.globalExecutionState = .succeeded
-                    self.globalVisibleResponseState = visibleResponseState
-                    self.globalInlineMessage = nil
-                    
-                    if self.selectedSavedRequestID == runningRequestID {
-                        self.state.visibleResponseState = visibleResponseState
-                        self.state.executionState = .succeeded
-                        self.clearInlineMessage()
-                    }
-                    
-                    if let runningRequestID {
-                        self.recordExecutionSummary(
-                            for: runningRequestID,
-                            statusCode: executedResponse.statusCode,
-                            duration: executedResponse.duration,
-                            sizeBytes: executedResponse.bodyData.count
-                        )
-                    }
-                    self.currentRunTask = nil
-                }
-            } catch let error as ExecutionError {
-                await MainActor.run {
-                    let execState = RequestExecutionState(
-                        lastExecutedRequest: LastExecutedRequest(request: request),
-                        executionState: .failed,
-                        visibleResponseState: nil
-                    )
-                    if let runningRequestID {
-                        self.executionStatesByRequestID[runningRequestID] = execState
-                    }
-                    
-                    self.globalExecutionState = .failed
-                    self.globalVisibleResponseState = nil
-                    self.globalInlineMessage = InlineMessage(severity: .error, text: error.localizedDescription)
-                    
-                    if self.selectedSavedRequestID == runningRequestID {
-                        self.state.executionState = .failed
-                        self.setInlineError(error.localizedDescription)
-                    }
-                    self.currentRunTask = nil
-                }
-            } catch {
-                await MainActor.run {
-                    let execState = RequestExecutionState(
-                        lastExecutedRequest: LastExecutedRequest(request: request),
-                        executionState: .failed,
-                        visibleResponseState: nil
-                    )
-                    if let runningRequestID {
-                        self.executionStatesByRequestID[runningRequestID] = execState
-                    }
-                    
-                    self.globalExecutionState = .failed
-                    self.globalVisibleResponseState = nil
-                    self.globalInlineMessage = InlineMessage(severity: .error, text: error.localizedDescription)
-                    
-                    if self.selectedSavedRequestID == runningRequestID {
-                        self.state.executionState = .failed
-                        self.setInlineError(error.localizedDescription)
-                    }
-                    self.currentRunTask = nil
+        currentRunTask = Task { [requestExecutor, responseFormatter, scriptRunner] in
+            if automation.postResponseScript.isEnabled {
+                let validation = await scriptRunner.validate(source: automation.postResponseScript.source)
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                switch validation {
+                case .valid:
+                    break
+                case .invalid(let diagnostic), .failed(let diagnostic):
+                    self.recordScriptPreflightFailure(diagnostic, runID: runID, request: request, requestID: runningRequestID)
+                    return
+                case .cancelled:
+                    self.finishCancelledRun(runID: runID)
+                    return
                 }
             }
+
+            do {
+                let executedResponse = try await requestExecutor.execute(request)
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                let formattedResponse = await responseFormatter.format(executedResponse)
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                var visibleResponseState = formattedResponse
+                if let previousResponseMode, previousResponseMode == .raw || visibleResponseState.body.jsonValue != nil {
+                    visibleResponseState.selectedMode = previousResponseMode
+                }
+                visibleResponseState.isStale = self.currentRequestDiffers(from: request)
+                self.publishHTTPResponse(
+                    visibleResponseState,
+                    executedResponse: executedResponse,
+                    request: request,
+                    requestID: runningRequestID,
+                    scriptIsEnabled: automation.postResponseScript.isEnabled
+                )
+
+                guard automation.postResponseScript.isEnabled else {
+                    self.finishRun(runID: runID)
+                    return
+                }
+
+                self.updateScriptState(.init(status: .running, diagnostic: nil, logs: [], durationMs: nil, changedVariableCount: 0), requestID: runningRequestID)
+                let scriptResult = await scriptRunner.run(PostResponseScriptInput(
+                    response: executedResponse,
+                    variables: variables,
+                    currentRequestID: variableOwnerID,
+                    source: automation.postResponseScript.source
+                ))
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                await self.finishScript(
+                    result: scriptResult,
+                    requestID: runningRequestID,
+                    variableOwnerID: variableOwnerID,
+                    capturedScript: automation.postResponseScript,
+                    runID: runID
+                )
+            } catch let error as ExecutionError {
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                self.recordTransportFailure(error.localizedDescription, request: request, requestID: runningRequestID)
+                self.finishRun(runID: runID)
+            } catch {
+                guard !Task.isCancelled, self.activeRunID == runID else { return }
+                self.recordTransportFailure(error.localizedDescription, request: request, requestID: runningRequestID)
+                self.finishRun(runID: runID)
+            }
+        }
+    }
+
+    private func publishHTTPResponse(
+        _ formattedResponse: VisibleResponseState,
+        executedResponse: ExecutedResponse,
+        request: Request,
+        requestID: UUID?,
+        scriptIsEnabled: Bool
+    ) {
+        let scriptState = scriptIsEnabled
+            ? PostResponseScriptState(status: .running, diagnostic: nil, logs: [], durationMs: nil, changedVariableCount: 0)
+            : .off
+        let executionState = RequestExecutionState(
+            lastExecutedRequest: LastExecutedRequest(request: request),
+            executionState: .succeeded,
+            visibleResponseState: formattedResponse,
+            postResponseScriptState: scriptState
+        )
+        if let requestID {
+            executionStatesByRequestID[requestID] = executionState
+        }
+        globalExecutionState = .succeeded
+        globalVisibleResponseState = formattedResponse
+        globalInlineMessage = nil
+        if selectedSavedRequestID == requestID {
+            state.visibleResponseState = formattedResponse
+            state.executionState = .succeeded
+            state.postResponseScriptState = scriptState
+            clearInlineMessage()
+        }
+        if let requestID {
+            recordExecutionSummary(
+                for: requestID,
+                statusCode: executedResponse.statusCode,
+                duration: executedResponse.duration,
+                sizeBytes: executedResponse.bodyData.count
+            )
+        }
+    }
+
+    private func finishScript(
+        result: PostResponseScriptRunResult,
+        requestID: UUID?,
+        variableOwnerID: UUID?,
+        capturedScript: PostResponseScript,
+        runID: UUID
+    ) async {
+        switch result.outcome {
+        case .passed:
+            do {
+                let changedVariables = try await commitScriptWrites(result.writes, requestID: variableOwnerID)
+                guard !Task.isCancelled, activeRunID == runID else { return }
+                for variable in changedVariables {
+                    variablesByID[variable.id] = variable
+                }
+                refreshVariablesPresentation()
+                let currentScript = state.requestAutomation.postResponseScript
+                let isStale = currentScript != capturedScript
+                let displayedStatus: PostResponseScriptStatus = currentScript.isEnabled
+                    ? (isStale ? .stale : .passed)
+                    : .off
+                updateScriptState(
+                    PostResponseScriptState(
+                        status: displayedStatus,
+                        diagnostic: nil,
+                        logs: result.logs,
+                        durationMs: result.durationMs,
+                        changedVariableCount: changedVariables.count
+                    ),
+                    requestID: requestID
+                )
+            } catch {
+                guard activeRunID == runID else { return }
+                let currentScript = state.requestAutomation.postResponseScript
+                let displayedStatus: PostResponseScriptStatus = !currentScript.isEnabled
+                    ? .off
+                    : (currentScript != capturedScript ? .stale : .failed)
+                updateScriptState(
+                    PostResponseScriptState(
+                        status: displayedStatus,
+                        diagnostic: ScriptDiagnostic(
+                            message: "Variable changes were not saved: \(error.localizedDescription)",
+                            line: nil,
+                            column: nil
+                        ),
+                        logs: result.logs,
+                        durationMs: result.durationMs,
+                        changedVariableCount: 0
+                    ),
+                    requestID: requestID
+                )
+            }
+        case .invalid, .failed, .timedOut:
+            let fallback: String
+            switch result.outcome {
+            case .invalid: fallback = "The post-response script is invalid."
+            case .timedOut: fallback = "The post-response script exceeded the 1 second limit."
+            default: fallback = "The post-response script failed."
+            }
+            let currentScript = state.requestAutomation.postResponseScript
+            let resultStatus: PostResponseScriptStatus = result.outcome == .invalid ? .invalid : .failed
+            let displayedStatus: PostResponseScriptStatus = !currentScript.isEnabled
+                ? .off
+                : (currentScript != capturedScript ? .stale : resultStatus)
+            updateScriptState(
+                PostResponseScriptState(
+                    status: displayedStatus,
+                    diagnostic: result.diagnostic ?? ScriptDiagnostic(message: fallback, line: nil, column: nil),
+                    logs: result.logs,
+                    durationMs: result.durationMs,
+                    changedVariableCount: 0
+                ),
+                requestID: requestID
+            )
+        case .cancelled:
+            finishCancelledRun(runID: runID)
+            return
+        }
+        finishRun(runID: runID)
+    }
+
+    private func commitScriptWrites(_ writes: [ScriptVariableWrite], requestID: UUID?) async throws -> [Variable] {
+        guard !writes.isEmpty else { return [] }
+        let mutations = try writes.map { write -> VariableBatch.SetMutation in
+            if write.scope == .request, requestID == nil {
+                throw VariableBatchError.missingRequestOwner
+            }
+            return VariableBatch.SetMutation(
+                scope: write.scope,
+                name: write.name,
+                value: write.value,
+                requestID: write.scope == .request ? requestID : nil
+            )
+        }
+        let batch = VariableBatch(mutations: mutations, committedAt: Date())
+        if let requestLibrary {
+            return try await requestLibrary.variables.applyVariableBatch(batch).changedVariables
+        }
+
+        var candidate = variablesByID
+        var changed: [Variable] = []
+        for mutation in mutations {
+            if let existing = candidate.values.first(where: { $0.name == mutation.name }) {
+                guard existing.scope == mutation.scope, existing.requestID == mutation.requestID else {
+                    throw VariableBatchError.scopeConflict(mutation.name)
+                }
+                guard existing.value != mutation.value else { continue }
+                var updated = existing
+                updated.value = mutation.value
+                updated.updatedAt = batch.committedAt
+                candidate[updated.id] = updated
+                changed.append(updated)
+            } else {
+                let created = Variable(
+                    name: mutation.name,
+                    value: mutation.value,
+                    scope: mutation.scope,
+                    requestID: mutation.requestID,
+                    createdAt: batch.committedAt,
+                    updatedAt: batch.committedAt
+                )
+                candidate[created.id] = created
+                changed.append(created)
+            }
+        }
+        variablesByID = candidate
+        return changed
+    }
+
+    private func updateScriptState(_ scriptState: PostResponseScriptState, requestID: UUID?) {
+        if let requestID, var cached = executionStatesByRequestID[requestID] {
+            cached.postResponseScriptState = scriptState
+            executionStatesByRequestID[requestID] = cached
+        }
+        if selectedSavedRequestID == requestID {
+            state.postResponseScriptState = scriptState
+        }
+    }
+
+    private func recordScriptPreflightFailure(
+        _ diagnostic: ScriptDiagnostic,
+        runID: UUID,
+        request: Request,
+        requestID: UUID?
+    ) {
+        let scriptState = PostResponseScriptState(
+            status: .invalid,
+            diagnostic: diagnostic,
+            logs: [],
+            durationMs: nil,
+            changedVariableCount: 0
+        )
+        state.executionState = .failed
+        state.postResponseScriptState = scriptState
+        globalExecutionState = .failed
+        globalInlineMessage = InlineMessage(severity: .error, text: "Post-response script is invalid.")
+        if let requestID {
+            executionStatesByRequestID[requestID] = RequestExecutionState(
+                lastExecutedRequest: state.lastExecutedRequest,
+                executionState: .failed,
+                visibleResponseState: state.visibleResponseState,
+                postResponseScriptState: scriptState
+            )
+        }
+        finishRun(runID: runID)
+    }
+
+    private func recordTransportFailure(_ message: String, request: Request, requestID: UUID?) {
+        let scriptState = state.requestAutomation.postResponseScript.isEnabled ? PostResponseScriptState.ready : .off
+        let executionState = RequestExecutionState(
+            lastExecutedRequest: LastExecutedRequest(request: request),
+            executionState: .failed,
+            visibleResponseState: nil,
+            postResponseScriptState: scriptState
+        )
+        if let requestID {
+            executionStatesByRequestID[requestID] = executionState
+        }
+        globalExecutionState = .failed
+        globalVisibleResponseState = nil
+        globalInlineMessage = InlineMessage(severity: .error, text: message)
+        if selectedSavedRequestID == requestID {
+            state.executionState = .failed
+            state.postResponseScriptState = scriptState
+            setInlineError(message)
+        }
+    }
+
+    private func finishRun(runID: UUID) {
+        guard activeRunID == runID else { return }
+        activeRunID = nil
+        currentRunTask = nil
+    }
+
+    private func finishCancelledRun(runID: UUID) {
+        guard activeRunID == runID else { return }
+        if state.executionState == .running {
+            state.executionState = state.visibleResponseState == nil ? .idle : .succeeded
+        }
+        if state.postResponseScriptState.status == .running {
+            state.postResponseScriptState = .ready
+        }
+        finishRun(runID: runID)
+    }
+
+    private func cancelActiveRun() {
+        let wasRunning = currentRunTask != nil
+        activeRunID = nil
+        currentRunTask?.cancel()
+        currentRunTask = nil
+        guard wasRunning else { return }
+        if state.executionState == .running {
+            state.executionState = state.visibleResponseState == nil ? .idle : .succeeded
+        }
+        if state.postResponseScriptState.status == .running {
+            state.postResponseScriptState = .ready
+        }
+        if globalExecutionState == .running {
+            globalExecutionState = globalVisibleResponseState == nil ? .idle : .succeeded
+        }
+    }
+
+    private func validateCurrentPostResponseScript() {
+        scriptValidationTask?.cancel()
+        guard state.requestAutomation.postResponseScript.isEnabled else { return }
+        let source = state.requestAutomation.postResponseScript.source
+        let requestID = selectedSavedRequestID
+        let priorStatus = state.postResponseScriptState.status
+        scriptValidationTask = Task { [scriptRunner] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            let result = await scriptRunner.validate(source: source)
+            guard !Task.isCancelled,
+                  self.selectedSavedRequestID == requestID,
+                  self.state.requestAutomation.postResponseScript.source == source else { return }
+            switch result {
+            case .valid:
+                if priorStatus != .stale {
+                    self.state.postResponseScriptState = .ready
+                }
+            case .invalid(let diagnostic), .failed(let diagnostic):
+                self.state.postResponseScriptState = PostResponseScriptState(
+                    status: .invalid,
+                    diagnostic: diagnostic,
+                    logs: [],
+                    durationMs: nil,
+                    changedVariableCount: 0
+                )
+            case .cancelled:
+                break
+            }
+            self.scriptValidationTask = nil
         }
     }
 
@@ -727,7 +1080,8 @@ final class SessionCoordinator: ObservableObject {
             executionStatesByRequestID[selectedSavedRequestID] = RequestExecutionState(
                 lastExecutedRequest: state.lastExecutedRequest,
                 executionState: .failed,
-                visibleResponseState: state.visibleResponseState
+                visibleResponseState: state.visibleResponseState,
+                postResponseScriptState: state.postResponseScriptState
             )
         }
     }
@@ -745,6 +1099,10 @@ final class SessionCoordinator: ObservableObject {
 
         visibleResponseState.isStale = currentRequestDiffers(from: lastExecutedRequest)
         state.visibleResponseState = visibleResponseState
+        if state.requestAutomation.postResponseScript.isEnabled,
+           (state.postResponseScriptState.status == .passed || state.postResponseScriptState.status == .failed) {
+            state.postResponseScriptState.status = .stale
+        }
     }
 
     private func currentRequestDiffers(from executedRequest: Request) -> Bool {
@@ -868,10 +1226,13 @@ final class SessionCoordinator: ObservableObject {
                         isStale: false
                     )
                     
+                    let effectiveSnapshot = loadedDrafts[request.id]?.snapshot
+                        ?? EditableRequestSnapshot(name: request.name, request: request.request, automation: request.automation)
                     loadedExecutionStates[request.id] = RequestExecutionState(
-                        lastExecutedRequest: LastExecutedRequest(request: loadedDrafts[request.id]?.snapshot.request ?? request.request),
+                        lastExecutedRequest: LastExecutedRequest(request: effectiveSnapshot.request),
                         executionState: .succeeded,
-                        visibleResponseState: visibleState
+                        visibleResponseState: visibleState,
+                        postResponseScriptState: effectiveSnapshot.automation.postResponseScript.isEnabled ? .ready : .off
                     )
                 }
             }
@@ -1011,7 +1372,7 @@ final class SessionCoordinator: ObservableObject {
             return draft.snapshot
         }
         guard let saved = savedRequestsByID[id] else { return nil }
-        return EditableRequestSnapshot(name: saved.name, request: saved.request)
+        return EditableRequestSnapshot(name: saved.name, request: saved.request, automation: saved.automation)
     }
 
     private func applySelectedRequestSnapshot() {
@@ -1021,12 +1382,18 @@ final class SessionCoordinator: ObservableObject {
                   let snapshot = effectiveSnapshotForSavedRequest(id: selectedSavedRequestID) else { return }
             state.workspaceRequest = snapshot.request
             state.workspaceName = snapshot.name
+            state.requestAutomation = snapshot.automation
             state.requestEditorExpansion = .allExpanded
+            state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
+            validateCurrentPostResponseScript()
         case .hiddenNewDraft:
             let snapshot = hiddenNewDraft?.snapshot ?? EditableRequestSnapshot(name: "Untitled Request", request: .empty)
             state.workspaceRequest = snapshot.request
             state.workspaceName = snapshot.name
+            state.requestAutomation = snapshot.automation
             state.requestEditorExpansion = .allExpanded
+            state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
+            validateCurrentPostResponseScript()
         }
     }
 
@@ -1110,7 +1477,11 @@ final class SessionCoordinator: ObservableObject {
             refreshRequestListPresentation()
             return
         }
-        let snapshot = EditableRequestSnapshot(name: normalizedWorkspaceName(), request: state.workspaceRequest)
+        let snapshot = EditableRequestSnapshot(
+            name: normalizedWorkspaceName(),
+            request: state.workspaceRequest,
+            automation: state.requestAutomation
+        )
         let now = Date()
         switch selectedContext {
         case .saved:
@@ -1186,7 +1557,9 @@ final class SessionCoordinator: ObservableObject {
             let urlString: String
             
             if let draft = draftsByRequestID[saved.id] {
-                isDirty = draft.snapshot.name != saved.name || draft.snapshot.request != saved.request
+                isDirty = draft.snapshot.name != saved.name
+                    || draft.snapshot.request != saved.request
+                    || draft.snapshot.automation != saved.automation
                 name = draft.snapshot.name
                 method = draft.snapshot.request.method
                 urlString = draft.snapshot.request.urlString
@@ -1229,11 +1602,15 @@ final class SessionCoordinator: ObservableObject {
             guard let selectedSavedRequestID,
                   let saved = savedRequestsByID[selectedSavedRequestID] else { return false }
             if let draft = draftsByRequestID[selectedSavedRequestID] {
-                return draft.snapshot.name != saved.name || draft.snapshot.request != saved.request
+                return draft.snapshot.name != saved.name
+                    || draft.snapshot.request != saved.request
+                    || draft.snapshot.automation != saved.automation
             }
             return false
         case .hiddenNewDraft:
-            return !state.workspaceRequest.isEffectivelyEmpty || !state.workspaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            return !state.workspaceRequest.isEffectivelyEmpty
+                || state.requestAutomation != .none
+                || !state.workspaceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -1242,7 +1619,7 @@ final class SessionCoordinator: ObservableObject {
         case .saved:
             return state.isCurrentRequestDirty
         case .hiddenNewDraft:
-            return !state.workspaceRequest.isEffectivelyEmpty
+            return !state.workspaceRequest.isEffectivelyEmpty || state.requestAutomation != .none
         }
     }
 
@@ -1305,7 +1682,8 @@ final class SessionCoordinator: ObservableObject {
         executionStatesByRequestID[selectedSavedRequestID] = RequestExecutionState(
             lastExecutedRequest: state.lastExecutedRequest,
             executionState: state.executionState,
-            visibleResponseState: state.visibleResponseState
+            visibleResponseState: state.visibleResponseState,
+            postResponseScriptState: state.postResponseScriptState
         )
     }
 
@@ -1313,11 +1691,13 @@ final class SessionCoordinator: ObservableObject {
         let cached = executionStatesByRequestID[id] ?? RequestExecutionState(
             lastExecutedRequest: nil,
             executionState: .idle,
-            visibleResponseState: nil
+            visibleResponseState: nil,
+            postResponseScriptState: state.requestAutomation.postResponseScript.isEnabled ? .ready : .off
         )
         state.lastExecutedRequest = cached.lastExecutedRequest
         state.executionState = cached.executionState
         state.visibleResponseState = cached.visibleResponseState
+        state.postResponseScriptState = cached.postResponseScriptState
     }
 
     // Computed HUD properties mapping to global states
@@ -1344,6 +1724,12 @@ final class SessionCoordinator: ObservableObject {
         case .running:
             return "The current request is in flight."
         case .succeeded:
+            if currentRunTask != nil, state.postResponseScriptState.status == .running {
+                return "Response received. Post-response script is running."
+            }
+            if state.postResponseScriptState.status == .failed || state.postResponseScriptState.status == .invalid {
+                return "Response received. Post-response script failed."
+            }
             return "Last request completed."
         case .failed:
             return globalInlineMessage?.text ?? "Last request failed."
@@ -1380,6 +1766,6 @@ final class SessionCoordinator: ObservableObject {
     }
 
     var hudCanRerun: Bool {
-        globalExecutionState != .running && globalLastExecutedRequest != nil
+        globalExecutionState != .running && currentRunTask == nil && globalLastExecutedRequest != nil
     }
 }

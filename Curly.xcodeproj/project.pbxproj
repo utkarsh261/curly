@@ -25,6 +25,8 @@
 		A00000010000000000000017 /* RequestLibraryPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000019 /* RequestLibraryPersistence.swift */; };
 		A00000010000000000000018 /* InMemoryRequestLibraryRepositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000020 /* InMemoryRequestLibraryRepositories.swift */; };
 		A00000010000000000000019 /* FileRequestLibraryRepositories.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000021 /* FileRequestLibraryRepositories.swift */; };
+		A00000010000000000000020 /* PostResponseScripting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000022 /* PostResponseScripting.swift */; };
+		A00000010000000000000021 /* JavaScriptCodeEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000110000000000000023 /* JavaScriptCodeEditorView.swift */; };
 		B00000010000000000000001 /* SessionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000001 /* SessionCoordinatorTests.swift */; };
 		B00000010000000000000002 /* SimpleCurlImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000002 /* SimpleCurlImporterTests.swift */; };
 		B00000010000000000000003 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
@@ -35,11 +37,21 @@
 		B00000010000000000000008 /* JSONTextKitFoldingSpikeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */; };
 		B00000010000000000000009 /* RequestLibraryPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000010 /* RequestLibraryPersistenceTests.swift */; };
 		B00000010000000000000010 /* RequestLibraryCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000011 /* RequestLibraryCoordinatorTests.swift */; };
+		B00000010000000000000011 /* PostResponseScriptingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000012 /* PostResponseScriptingTests.swift */; };
+		B00000010000000000000012 /* JavaScriptCodeEditorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000110000000000000013 /* JavaScriptCodeEditorTests.swift */; };
 		C00000010000000000000001 /* URLBarImportUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000001 /* URLBarImportUITests.swift */; };
 		C00000010000000000000003 /* SavedRequestsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000003 /* SavedRequestsUITests.swift */; };
 		C00000010000000000000004 /* VariablesUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000004 /* VariablesUITests.swift */; };
 		C00000010000000000000005 /* SidebarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000005 /* SidebarUITests.swift */; };
+		C00000010000000000000006 /* PostResponseScriptsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000110000000000000006 /* PostResponseScriptsUITests.swift */; };
 		C00000010000000000000002 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B00000110000000000000004 /* XCTest.framework */; };
+		D10000010000000000000001 /* CurlyQuickJS.c in Sources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000001 /* CurlyQuickJS.c */; };
+		D10000010000000000000002 /* quickjs.c in Sources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000003 /* quickjs.c */; };
+		D10000010000000000000003 /* dtoa.c in Sources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000004 /* dtoa.c */; };
+		D10000010000000000000004 /* libregexp.c in Sources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000005 /* libregexp.c */; };
+		D10000010000000000000005 /* libunicode.c in Sources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000006 /* libunicode.c */; };
+		D10000010000000000000006 /* libCurlyQuickJS.a in Frameworks */ = {isa = PBXBuildFile; fileRef = D10000110000000000000007 /* libCurlyQuickJS.a */; };
+		D10000010000000000000007 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = D10000110000000000000009 /* LICENSE */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +68,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = A00000410000000000000001;
 			remoteInfo = Curly;
+		};
+		D10000210000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000610000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D10000410000000000000001;
+			remoteInfo = CurlyQuickJS;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -80,6 +99,8 @@
 		A00000110000000000000019 /* RequestLibraryPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestLibraryPersistence.swift; sourceTree = "<group>"; };
 		A00000110000000000000020 /* InMemoryRequestLibraryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InMemoryRequestLibraryRepositories.swift; sourceTree = "<group>"; };
 		A00000110000000000000021 /* FileRequestLibraryRepositories.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileRequestLibraryRepositories.swift; sourceTree = "<group>"; };
+		A00000110000000000000022 /* PostResponseScripting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostResponseScripting.swift; sourceTree = "<group>"; };
+		A00000110000000000000023 /* JavaScriptCodeEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JavaScriptCodeEditorView.swift; sourceTree = "<group>"; };
 		B00000110000000000000001 /* SessionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionCoordinatorTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000002 /* SimpleCurlImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimpleCurlImporterTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000003 /* CurlyTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurlyTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -91,11 +112,24 @@
 		B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONTextKitFoldingSpikeTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000010 /* RequestLibraryPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestLibraryPersistenceTests.swift; sourceTree = "<group>"; };
 		B00000110000000000000011 /* RequestLibraryCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RequestLibraryCoordinatorTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000012 /* PostResponseScriptingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostResponseScriptingTests.swift; sourceTree = "<group>"; };
+		B00000110000000000000013 /* JavaScriptCodeEditorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JavaScriptCodeEditorTests.swift; sourceTree = "<group>"; };
 		C00000110000000000000001 /* URLBarImportUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLBarImportUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000003 /* SavedRequestsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedRequestsUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000004 /* VariablesUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VariablesUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000005 /* SidebarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarUITests.swift; sourceTree = "<group>"; };
+		C00000110000000000000006 /* PostResponseScriptsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PostResponseScriptsUITests.swift; sourceTree = "<group>"; };
 		C00000110000000000000002 /* CurlyUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CurlyUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D10000110000000000000001 /* CurlyQuickJS.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = CurlyQuickJS.c; sourceTree = "<group>"; };
+		D10000110000000000000002 /* CurlyQuickJS.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CurlyQuickJS.h; sourceTree = "<group>"; };
+		D10000110000000000000003 /* quickjs.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = quickjs.c; sourceTree = "<group>"; };
+		D10000110000000000000004 /* dtoa.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = dtoa.c; sourceTree = "<group>"; };
+		D10000110000000000000005 /* libregexp.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = libregexp.c; sourceTree = "<group>"; };
+		D10000110000000000000006 /* libunicode.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = libunicode.c; sourceTree = "<group>"; };
+		D10000110000000000000007 /* libCurlyQuickJS.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libCurlyQuickJS.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		D10000110000000000000008 /* VENDOR.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = VENDOR.md; sourceTree = "<group>"; };
+		D10000110000000000000009 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		D1000011000000000000000A /* quickjs.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = quickjs.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +137,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D10000010000000000000006 /* libCurlyQuickJS.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -139,6 +174,7 @@
 				A00000310000000000000002 /* Curly */,
 				B00000310000000000000002 /* CurlyTests */,
 				C00000310000000000000002 /* CurlyUITests */,
+				D10000310000000000000001 /* CurlyQuickJS */,
 				A00000310000000000000003 /* Products */,
 				5E5FC9CC2FBE31C60004F011 /* Recovered References */,
 			);
@@ -162,6 +198,7 @@
 				A00000110000000000000007 /* Curly.app */,
 				B00000110000000000000003 /* CurlyTests.xctest */,
 				C00000110000000000000002 /* CurlyUITests.xctest */,
+				D10000110000000000000007 /* libCurlyQuickJS.a */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -201,6 +238,7 @@
 				A00000110000000000000015 /* JSONCodeEditorTextKit.swift */,
 				A00000110000000000000016 /* JSONCodeEditorView.swift */,
 				A00000110000000000000017 /* ColorExtensions.swift */,
+				A00000110000000000000023 /* JavaScriptCodeEditorView.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -216,6 +254,7 @@
 				A00000110000000000000019 /* RequestLibraryPersistence.swift */,
 				A00000110000000000000020 /* InMemoryRequestLibraryRepositories.swift */,
 				A00000110000000000000021 /* FileRequestLibraryRepositories.swift */,
+				A00000110000000000000022 /* PostResponseScripting.swift */,
 			);
 			path = Infrastructure;
 			sourceTree = "<group>";
@@ -232,6 +271,8 @@
 				B00000110000000000000009 /* JSONTextKitFoldingSpikeTests.swift */,
 				B00000110000000000000010 /* RequestLibraryPersistenceTests.swift */,
 				B00000110000000000000011 /* RequestLibraryCoordinatorTests.swift */,
+				B00000110000000000000012 /* PostResponseScriptingTests.swift */,
+				B00000110000000000000013 /* JavaScriptCodeEditorTests.swift */,
 			);
 			path = CurlyTests;
 			sourceTree = "<group>";
@@ -243,8 +284,33 @@
 				C00000110000000000000003 /* SavedRequestsUITests.swift */,
 				C00000110000000000000004 /* VariablesUITests.swift */,
 				C00000110000000000000005 /* SidebarUITests.swift */,
+				C00000110000000000000006 /* PostResponseScriptsUITests.swift */,
 			);
 			path = CurlyUITests;
+			sourceTree = "<group>";
+		};
+		D10000310000000000000001 /* CurlyQuickJS */ = {
+			isa = PBXGroup;
+			children = (
+				D10000110000000000000001 /* CurlyQuickJS.c */,
+				D10000110000000000000002 /* CurlyQuickJS.h */,
+				D10000310000000000000002 /* Vendor */,
+				D10000110000000000000008 /* VENDOR.md */,
+				D10000110000000000000009 /* LICENSE */,
+			);
+			path = CurlyQuickJS;
+			sourceTree = "<group>";
+		};
+		D10000310000000000000002 /* Vendor */ = {
+			isa = PBXGroup;
+			children = (
+				D10000110000000000000003 /* quickjs.c */,
+				D10000110000000000000004 /* dtoa.c */,
+				D10000110000000000000005 /* libregexp.c */,
+				D10000110000000000000006 /* libunicode.c */,
+				D1000011000000000000000A /* quickjs.h */,
+			);
+			path = Vendor;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -256,10 +322,12 @@
 			buildPhases = (
 				A00000510000000000000001 /* Sources */,
 				A00000210000000000000001 /* Frameworks */,
+				A00000910000000000000001 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				D10000610000000000000001 /* PBXTargetDependency */,
 			);
 			name = Curly;
 			packageProductDependencies = (
@@ -306,6 +374,23 @@
 			productReference = C00000110000000000000002 /* CurlyUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		D10000410000000000000001 /* CurlyQuickJS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D10000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyQuickJS" */;
+			buildPhases = (
+				D10000510000000000000001 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CurlyQuickJS;
+			packageProductDependencies = (
+			);
+			productName = CurlyQuickJS;
+			productReference = D10000110000000000000007 /* libCurlyQuickJS.a */;
+			productType = "com.apple.product-type.library.static";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -327,6 +412,9 @@
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = A00000410000000000000001;
 					};
+					D10000410000000000000001 = {
+						CreatedOnToolsVersion = 26.3;
+					};
 				};
 			};
 			buildConfigurationList = A00000810000000000000002 /* Build configuration list for PBXProject "Curly" */;
@@ -346,9 +434,21 @@
 				A00000410000000000000001 /* Curly */,
 				B00000410000000000000001 /* CurlyTests */,
 				C00000410000000000000001 /* CurlyUITests */,
+				D10000410000000000000001 /* CurlyQuickJS */,
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A00000910000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D10000010000000000000007 /* LICENSE in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		A00000510000000000000001 /* Sources */ = {
@@ -373,6 +473,8 @@
 				A00000010000000000000017 /* RequestLibraryPersistence.swift in Sources */,
 				A00000010000000000000018 /* InMemoryRequestLibraryRepositories.swift in Sources */,
 				A00000010000000000000019 /* FileRequestLibraryRepositories.swift in Sources */,
+				A00000010000000000000020 /* PostResponseScripting.swift in Sources */,
+				A00000010000000000000021 /* JavaScriptCodeEditorView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -389,6 +491,8 @@
 				B00000010000000000000008 /* JSONTextKitFoldingSpikeTests.swift in Sources */,
 				B00000010000000000000009 /* RequestLibraryPersistenceTests.swift in Sources */,
 				B00000010000000000000010 /* RequestLibraryCoordinatorTests.swift in Sources */,
+				B00000010000000000000011 /* PostResponseScriptingTests.swift in Sources */,
+				B00000010000000000000012 /* JavaScriptCodeEditorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -400,6 +504,19 @@
 				C00000010000000000000003 /* SavedRequestsUITests.swift in Sources */,
 				C00000010000000000000004 /* VariablesUITests.swift in Sources */,
 				C00000010000000000000005 /* SidebarUITests.swift in Sources */,
+				C00000010000000000000006 /* PostResponseScriptsUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000510000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D10000010000000000000001 /* CurlyQuickJS.c in Sources */,
+				D10000010000000000000002 /* quickjs.c in Sources */,
+				D10000010000000000000003 /* dtoa.c in Sources */,
+				D10000010000000000000004 /* libregexp.c in Sources */,
+				D10000010000000000000005 /* libunicode.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -415,6 +532,11 @@
 			isa = PBXTargetDependency;
 			target = A00000410000000000000001 /* Curly */;
 			targetProxy = C00000210000000000000001 /* PBXContainerItemProxy */;
+		};
+		D10000610000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D10000410000000000000001 /* CurlyQuickJS */;
+			targetProxy = D10000210000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -564,6 +686,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = CurlyQuickJS/CurlyQuickJS.h;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -594,6 +717,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = CurlyQuickJS/CurlyQuickJS.h;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 6.0;
 			};
@@ -699,6 +823,42 @@
 			};
 			name = Release;
 		};
+		D10000710000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_C_LANGUAGE_STANDARD = gnu11;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"_GNU_SOURCE",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = CurlyQuickJS/Vendor;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = CurlyQuickJS;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		D10000710000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_C_LANGUAGE_STANDARD = gnu11;
+				CODE_SIGN_STYLE = Automatic;
+				DEFINES_MODULE = NO;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"_GNU_SOURCE",
+					"$(inherited)",
+				);
+				HEADER_SEARCH_PATHS = CurlyQuickJS/Vendor;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = CurlyQuickJS;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -734,6 +894,15 @@
 			buildConfigurations = (
 				C00000710000000000000001 /* Debug */,
 				C00000710000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		D10000810000000000000001 /* Build configuration list for PBXNativeTarget "CurlyQuickJS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D10000710000000000000001 /* Debug */,
+				D10000710000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
