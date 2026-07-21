@@ -44,9 +44,7 @@ final class JavaScriptCodeEditorTests: XCTestCase {
         guard let undoManager = textView.undoManager else {
             return XCTFail("Expected an undo manager")
         }
-        undoManager.registerUndo(withTarget: textView) { target in
-            target.string = "a"
-        }
+        undoManager.registerUndo(withTarget: textView) { _ in }
         XCTAssertTrue(undoManager.canUndo)
 
         JavaScriptCodeEditorView.replaceContents(of: textView, with: "b")
