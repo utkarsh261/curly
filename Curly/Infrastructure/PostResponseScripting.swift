@@ -137,7 +137,14 @@ struct QuickJSPostResponseScriptRunner: PostResponseScriptRunning {
             guard added else { return allocationFailureResult() }
         }
 
-        for variable in scriptInput.variables {
+        let visibleVariables = scriptInput.variables.filter { variable in
+            variable.scope == .global
+                || (variable.scope == .request && variable.requestID == scriptInput.currentRequestID)
+        }
+        let resolvedVariables = VariableLookup(variables: visibleVariables).variablesByName.values.sorted {
+            $0.name < $1.name
+        }
+        for variable in resolvedVariables {
             let scope = variable.scope == .global ? CQJS_SCOPE_GLOBAL : CQJS_SCOPE_REQUEST
             let belongsToCurrentRequest = variable.scope == .request && variable.requestID == scriptInput.currentRequestID
             let added = withUTF8(variable.name) { name, nameLength in

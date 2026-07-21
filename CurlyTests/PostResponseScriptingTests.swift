@@ -105,6 +105,55 @@ final class PostResponseScriptingTests: XCTestCase {
         XCTAssertNotNil(result.diagnostic?.line)
     }
 
+    func testPrimitiveThrownValuesProduceUsefulDiagnostics() async {
+        for (source, expected) in [
+            (#"throw "boom";"#, "boom"),
+            ("throw 42;", "42"),
+            ("throw null;", "null")
+        ] {
+            let result = await runner.run(makeInput(source: source))
+            XCTAssertEqual(result.outcome, .failed)
+            XCTAssertEqual(result.diagnostic?.message, expected)
+        }
+    }
+
+    func testDuplicateInputVariablesUseNewestValueLikeRequestInterpolation() async {
+        let older = Variable(
+            name: "token",
+            value: "old",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = Variable(
+            name: "token",
+            value: "new",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 2),
+            updatedAt: Date(timeIntervalSince1970: 2)
+        )
+        let result = await runner.run(makeInput(
+            variables: [older, newer],
+            source: #"curly.variables.global.set("observed", curly.variables.get("token"));"#
+        ))
+
+        XCTAssertEqual(result.outcome, .passed)
+        XCTAssertEqual(result.writes, [
+            ScriptVariableWrite(scope: .global, name: "observed", value: "new")
+        ])
+    }
+
+    func testOversizedJSONBodyIsRejectedBeforeRuntimeAllocation() async {
+        let body = "{\"padding\":\"" + String(repeating: "x", count: 8 * 1_024 * 1_024) + "\"}"
+
+        let result = await runner.run(makeInput(body: body, source: "curly.response.json();"))
+
+        XCTAssertEqual(result.outcome, .failed)
+        XCTAssertTrue(result.writes.isEmpty)
+        XCTAssertTrue(result.diagnostic?.message.contains("8 MiB") == true)
+        XCTAssertEqual(CQJSLiveRuntimeCount(), 0)
+    }
+
     func testComplexValuesMissingArgumentsAndInvalidVariableNamesAreRejected() async {
         for source in [
             "curly.variables.global.set(\"token\", [1, 2]);",

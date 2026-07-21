@@ -1236,7 +1236,7 @@ private struct RequestEditorAccordion: View {
             .font(.caption.monospaced())
             .textSelection(.enabled)
 
-            Text("Synchronous · 1 second limit · writes are atomic and stored as strings")
+            Text("Synchronous · 1 second limit · 8 MiB JSON limit · atomic string writes")
                 .font(.caption2)
                 .foregroundStyle(Color.textMuted)
         }

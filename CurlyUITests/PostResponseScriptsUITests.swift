@@ -151,6 +151,36 @@ final class PostResponseScriptsUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["console.error(value)"].firstMatch.exists)
     }
 
+    func testRevertingScriptClearsStaleUndoHistory() {
+        let app = launchPersistentApp()
+        defer { app.terminate() }
+
+        configureRequest(in: app)
+        replaceText("Undo Script", in: app.textFields["request-name-field"].firstMatch)
+        let savedSource = #"console.log("saved");"#
+        configureScript(savedSource, in: app)
+        let saveButton = app.buttons["save-request-button"].firstMatch
+        XCTAssertTrue(saveButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 3) { saveButton.isEnabled })
+        saveButton.click()
+
+        let row = app.buttons["Undo Script"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        let editor = app.textViews["post-response-script-editor"].firstMatch
+        replaceText(String(repeating: "x", count: 200), in: editor)
+        row.rightClick()
+        let revert = app.menuItems["Revert Draft"].firstMatch
+        XCTAssertTrue(revert.waitForExistence(timeout: 3))
+        revert.click()
+        XCTAssertTrue(waitUntil(timeout: 3) { self.text(of: editor) == savedSource })
+
+        editor.click()
+        editor.typeKey("z", modifierFlags: .command)
+
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertEqual(text(of: editor), savedSource)
+    }
+
     private func launchApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-mode"]
@@ -159,6 +189,19 @@ final class PostResponseScriptsUITests: XCTestCase {
             app.activate()
             app.typeKey("0", modifierFlags: .command)
         }
+        return app
+    }
+
+    private func launchPersistentApp() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-test-mode",
+            "--ui-test-enable-persistence",
+            "--ui-test-library-id",
+            UUID().uuidString
+        ]
+        app.launch()
+        XCTAssertTrue(app.textFields["url-input-field"].firstMatch.waitForExistence(timeout: 5))
         return app
     }
 

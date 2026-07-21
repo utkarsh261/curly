@@ -47,6 +47,7 @@ final class SessionCoordinator: ObservableObject {
     @Published private(set) var globalExecutionState: ExecutionState = .idle
     @Published private(set) var globalVisibleResponseState: VisibleResponseState?
     @Published private(set) var globalInlineMessage: InlineMessage?
+    @Published private(set) var globalPostResponseScriptState: PostResponseScriptState = .off
 
     @Published private(set) var state: SessionState = .initial
 
@@ -66,6 +67,7 @@ final class SessionCoordinator: ObservableObject {
         self.globalExecutionState = initialState.executionState
         self.globalLastExecutedRequest = initialState.lastExecutedRequest
         self.globalVisibleResponseState = initialState.visibleResponseState
+        self.globalPostResponseScriptState = initialState.postResponseScriptState
         self.globalLastExecutedRequestID = initialState.selectedSavedRequestID
         self.curlImporter = curlImporter
         self.requestExecutor = requestExecutor
@@ -302,11 +304,14 @@ final class SessionCoordinator: ObservableObject {
             recordPreflightFailure(result.errorMessage ?? "The request is not runnable yet.")
             return
         }
+        let variableOwnerID = state.requestAutomation.postResponseScript.isEnabled
+            ? ensureCurrentVariableOwnerID()
+            : currentVariableOwnerID()
         startExecution(
             using: resolvedRequest,
             automation: state.requestAutomation,
             variables: listVariablesForCurrentContext(),
-            variableOwnerID: currentVariableOwnerID()
+            variableOwnerID: variableOwnerID
         )
     }
 
@@ -466,8 +471,8 @@ final class SessionCoordinator: ObservableObject {
         selectedContext = .saved
         selectedSavedRequestID = newID
         applySelectedRequestSnapshot()
-        
         loadCachedResponseState(for: newID)
+        validateCurrentPostResponseScript()
         
         persistSelectionState()
         refreshRequestListPresentation()
@@ -478,6 +483,7 @@ final class SessionCoordinator: ObservableObject {
             return
         }
         guard savedRequestsByID[id] != nil else { return }
+        guard selectedContext != .saved || selectedSavedRequestID != id else { return }
         
         cancelActiveRun()
         cacheCurrentResponseState()
@@ -485,8 +491,8 @@ final class SessionCoordinator: ObservableObject {
         selectedContext = .saved
         selectedSavedRequestID = id
         applySelectedRequestSnapshot()
-        
         loadCachedResponseState(for: id)
+        validateCurrentPostResponseScript()
         
         persistSelectionState()
         refreshRequestListPresentation()
@@ -590,6 +596,7 @@ final class SessionCoordinator: ObservableObject {
             globalExecutionState = .idle
             globalVisibleResponseState = nil
             globalInlineMessage = nil
+            globalPostResponseScriptState = .off
         }
         enqueuePersistenceTask(errorPrefix: "Failed to delete request") {
             try await requestLibrary.workspaceFacade.deleteSavedRequestAndRelatedState(id: id)
@@ -620,6 +627,7 @@ final class SessionCoordinator: ObservableObject {
             state.workspaceName = saved.name
             state.requestAutomation = saved.automation
             state.postResponseScriptState = saved.automation.postResponseScript.isEnabled ? .ready : .off
+            validateCurrentPostResponseScript()
             clearInlineMessage()
         }
         enqueuePersistenceTask(errorPrefix: "Failed to revert draft") {
@@ -649,6 +657,7 @@ final class SessionCoordinator: ObservableObject {
         state.workspaceName = duplicate.name
         state.requestAutomation = duplicate.automation
         state.postResponseScriptState = duplicate.automation.postResponseScript.isEnabled ? .ready : .off
+        validateCurrentPostResponseScript()
         enqueuePersistenceTask(errorPrefix: "Failed to duplicate request") {
             try await requestLibrary.savedRequests.upsert(duplicate)
         }
@@ -700,12 +709,10 @@ final class SessionCoordinator: ObservableObject {
         state.executionState = .running
         state.postResponseScriptState = automation.postResponseScript.isEnabled ? .ready : .off
         clearInlineMessage()
-        state.lastExecutedRequest = LastExecutedRequest(request: request)
-        
+
         globalExecutionState = .running
         globalInlineMessage = nil
-        globalLastExecutedRequest = LastExecutedRequest(request: request)
-        globalLastExecutedRequestID = selectedSavedRequestID
+        globalPostResponseScriptState = automation.postResponseScript.isEnabled ? .ready : .off
         globalVisibleResponseState = nil
         
         let previousResponseMode = state.visibleResponseState?.selectedMode
@@ -726,6 +733,9 @@ final class SessionCoordinator: ObservableObject {
                     return
                 }
             }
+
+            guard !Task.isCancelled, self.activeRunID == runID else { return }
+            self.promoteValidatedExecution(request: request, requestID: runningRequestID)
 
             do {
                 let executedResponse = try await requestExecutor.execute(request)
@@ -799,6 +809,7 @@ final class SessionCoordinator: ObservableObject {
         globalExecutionState = .succeeded
         globalVisibleResponseState = formattedResponse
         globalInlineMessage = nil
+        globalPostResponseScriptState = scriptState
         if selectedSavedRequestID == requestID {
             state.visibleResponseState = formattedResponse
             state.executionState = .succeeded
@@ -813,6 +824,15 @@ final class SessionCoordinator: ObservableObject {
                 sizeBytes: executedResponse.bodyData.count
             )
         }
+    }
+
+    private func promoteValidatedExecution(request: Request, requestID: UUID?) {
+        let lastExecuted = LastExecutedRequest(request: request)
+        if selectedSavedRequestID == requestID {
+            state.lastExecutedRequest = lastExecuted
+        }
+        globalLastExecutedRequest = lastExecuted
+        globalLastExecutedRequestID = requestID
     }
 
     private func finishScript(
@@ -831,6 +851,9 @@ final class SessionCoordinator: ObservableObject {
                     variablesByID[variable.id] = variable
                 }
                 refreshVariablesPresentation()
+                if selectedSavedRequestID == requestID {
+                    markResultStaleIfNeeded()
+                }
                 let currentScript = state.requestAutomation.postResponseScript
                 let isStale = currentScript != capturedScript
                 let displayedStatus: PostResponseScriptStatus = currentScript.isEnabled
@@ -911,7 +934,9 @@ final class SessionCoordinator: ObservableObject {
         }
         let batch = VariableBatch(mutations: mutations, committedAt: Date())
         if let requestLibrary {
-            return try await requestLibrary.variables.applyVariableBatch(batch).changedVariables
+            return try await performSerializedPersistenceOperation {
+                try await requestLibrary.variables.applyVariableBatch(batch).changedVariables
+            }
         }
 
         var candidate = variablesByID
@@ -952,6 +977,9 @@ final class SessionCoordinator: ObservableObject {
         if selectedSavedRequestID == requestID {
             state.postResponseScriptState = scriptState
         }
+        if globalLastExecutedRequestID == requestID {
+            globalPostResponseScriptState = scriptState
+        }
     }
 
     private func recordScriptPreflightFailure(
@@ -970,6 +998,7 @@ final class SessionCoordinator: ObservableObject {
         state.executionState = .failed
         state.postResponseScriptState = scriptState
         globalExecutionState = .failed
+        globalPostResponseScriptState = scriptState
         globalInlineMessage = InlineMessage(severity: .error, text: "Post-response script is invalid.")
         if let requestID {
             executionStatesByRequestID[requestID] = RequestExecutionState(
@@ -996,6 +1025,7 @@ final class SessionCoordinator: ObservableObject {
         globalExecutionState = .failed
         globalVisibleResponseState = nil
         globalInlineMessage = InlineMessage(severity: .error, text: message)
+        globalPostResponseScriptState = scriptState
         if selectedSavedRequestID == requestID {
             state.executionState = .failed
             state.postResponseScriptState = scriptState
@@ -1017,6 +1047,9 @@ final class SessionCoordinator: ObservableObject {
         if state.postResponseScriptState.status == .running {
             state.postResponseScriptState = .ready
         }
+        if globalPostResponseScriptState.status == .running {
+            globalPostResponseScriptState = .ready
+        }
         finishRun(runID: runID)
     }
 
@@ -1035,6 +1068,9 @@ final class SessionCoordinator: ObservableObject {
         if globalExecutionState == .running {
             globalExecutionState = globalVisibleResponseState == nil ? .idle : .succeeded
         }
+        if globalPostResponseScriptState.status == .running {
+            globalPostResponseScriptState = .ready
+        }
     }
 
     private func validateCurrentPostResponseScript() {
@@ -1042,7 +1078,6 @@ final class SessionCoordinator: ObservableObject {
         guard state.requestAutomation.postResponseScript.isEnabled else { return }
         let source = state.requestAutomation.postResponseScript.source
         let requestID = selectedSavedRequestID
-        let priorStatus = state.postResponseScriptState.status
         scriptValidationTask = Task { [scriptRunner] in
             try? await Task.sleep(for: .milliseconds(180))
             guard !Task.isCancelled else { return }
@@ -1052,7 +1087,8 @@ final class SessionCoordinator: ObservableObject {
                   self.state.requestAutomation.postResponseScript.source == source else { return }
             switch result {
             case .valid:
-                if priorStatus != .stale {
+                if self.state.postResponseScriptState.status == .ready
+                    || self.state.postResponseScriptState.status == .invalid {
                     self.state.postResponseScriptState = .ready
                 }
             case .invalid(let diagnostic), .failed(let diagnostic):
@@ -1283,11 +1319,13 @@ final class SessionCoordinator: ObservableObject {
                     self.globalLastExecutedRequest = globalLastReq
                     self.globalExecutionState = globalExecState
                     self.globalVisibleResponseState = globalVisibleState
+                    self.globalPostResponseScriptState = loadedExecutionStates[globalLastID]?.postResponseScriptState ?? .off
                 } else {
                     self.globalLastExecutedRequestID = self.selectedSavedRequestID
                     self.globalLastExecutedRequest = self.state.lastExecutedRequest
                     self.globalExecutionState = self.state.executionState
                     self.globalVisibleResponseState = self.state.visibleResponseState
+                    self.globalPostResponseScriptState = self.state.postResponseScriptState
                 }
                 
                 self.globalInlineMessage = self.state.inlineMessage
@@ -1314,6 +1352,7 @@ final class SessionCoordinator: ObservableObject {
             selectedContext = .hiddenNewDraft
             selectedSavedRequestID = nil
             applySelectedRequestSnapshot()
+            validateCurrentPostResponseScript()
             return
         }
 
@@ -1326,6 +1365,7 @@ final class SessionCoordinator: ObservableObject {
                 selectedSavedRequestID = persistedSavedID
                 applySelectedRequestSnapshot()
                 loadCachedResponseState(for: persistedSavedID)
+                validateCurrentPostResponseScript()
                 return
             }
 
@@ -1335,6 +1375,7 @@ final class SessionCoordinator: ObservableObject {
                 selectedSavedRequestID = persistedSavedID
                 applySelectedRequestSnapshot()
                 loadCachedResponseState(for: persistedSavedID)
+                validateCurrentPostResponseScript()
                 return
             }
 
@@ -1343,6 +1384,7 @@ final class SessionCoordinator: ObservableObject {
                 selectedSavedRequestID = mostRecentlyEdited.id
                 applySelectedRequestSnapshot()
                 loadCachedResponseState(for: mostRecentlyEdited.id)
+                validateCurrentPostResponseScript()
                 return
             }
         }
@@ -1385,7 +1427,6 @@ final class SessionCoordinator: ObservableObject {
             state.requestAutomation = snapshot.automation
             state.requestEditorExpansion = .allExpanded
             state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
-            validateCurrentPostResponseScript()
         case .hiddenNewDraft:
             let snapshot = hiddenNewDraft?.snapshot ?? EditableRequestSnapshot(name: "Untitled Request", request: .empty)
             state.workspaceRequest = snapshot.request
@@ -1393,7 +1434,6 @@ final class SessionCoordinator: ObservableObject {
             state.requestAutomation = snapshot.automation
             state.requestEditorExpansion = .allExpanded
             state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
-            validateCurrentPostResponseScript()
         }
     }
 
@@ -1438,8 +1478,25 @@ final class SessionCoordinator: ObservableObject {
         if let current = currentVariableOwnerID() {
             return current
         }
-        selectHiddenNewDraft(createIfMissing: true)
-        return hiddenNewDraft?.id
+        guard selectedContext == .hiddenNewDraft else { return nil }
+        let draft = HiddenNewDraft(
+            id: UUID(),
+            snapshot: EditableRequestSnapshot(
+                name: normalizedWorkspaceName(),
+                request: state.workspaceRequest,
+                automation: state.requestAutomation
+            ),
+            nameWasManuallyEdited: true,
+            lastEditedAt: Date()
+        )
+        hiddenNewDraft = draft
+        if let requestLibrary {
+            enqueuePersistenceTask {
+                try await requestLibrary.hiddenDraft.saveHiddenDraft(draft)
+            }
+        }
+        refreshRequestListPresentation()
+        return draft.id
     }
 
     private func persistVariable(_ variable: Variable) {
@@ -1533,6 +1590,7 @@ final class SessionCoordinator: ObservableObject {
             }
         }
         applySelectedRequestSnapshot()
+        validateCurrentPostResponseScript()
         persistSelectionState()
         refreshRequestListPresentation()
     }
@@ -1543,6 +1601,8 @@ final class SessionCoordinator: ObservableObject {
             selectedContext = .saved
             selectedSavedRequestID = next
             applySelectedRequestSnapshot()
+            loadCachedResponseState(for: next)
+            validateCurrentPostResponseScript()
             persistSelectionState()
             return
         }
@@ -1677,6 +1737,29 @@ final class SessionCoordinator: ObservableObject {
         }
     }
 
+    private func performSerializedPersistenceOperation<Value: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> Value
+    ) async throws -> Value {
+        let taskID = UUID()
+        let previousChain = persistenceChain
+        let resultTask = Task<Result<Value, Error>, Never> {
+            _ = await previousChain.result
+            do {
+                return .success(try await operation())
+            } catch {
+                return .failure(error)
+            }
+        }
+        let chainTask = Task {
+            _ = await resultTask.value
+        }
+        pendingPersistenceTasks[taskID] = chainTask
+        persistenceChain = chainTask
+        let result = await resultTask.value
+        pendingPersistenceTasks[taskID] = nil
+        return try result.get()
+    }
+
     private func cacheCurrentResponseState() {
         guard let selectedSavedRequestID else { return }
         executionStatesByRequestID[selectedSavedRequestID] = RequestExecutionState(
@@ -1724,10 +1807,10 @@ final class SessionCoordinator: ObservableObject {
         case .running:
             return "The current request is in flight."
         case .succeeded:
-            if currentRunTask != nil, state.postResponseScriptState.status == .running {
+            if currentRunTask != nil, globalPostResponseScriptState.status == .running {
                 return "Response received. Post-response script is running."
             }
-            if state.postResponseScriptState.status == .failed || state.postResponseScriptState.status == .invalid {
+            if globalPostResponseScriptState.status == .failed || globalPostResponseScriptState.status == .invalid {
                 return "Response received. Post-response script failed."
             }
             return "Last request completed."

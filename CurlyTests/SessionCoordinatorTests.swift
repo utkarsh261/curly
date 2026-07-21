@@ -898,6 +898,39 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.postResponseScriptState.status, .invalid)
         XCTAssertNotNil(coordinator.state.postResponseScriptState.diagnostic)
         XCTAssertNil(coordinator.state.visibleResponseState)
+        XCTAssertNil(coordinator.globalLastExecutedRequest)
+    }
+
+    func testInvalidScriptDoesNotReplaceLastSuccessfullyDispatchedRequest() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/first")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let first = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: first,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.executionState == .succeeded }
+
+        coordinator.setURL("https://example.com/invalid")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("const = ;")
+        coordinator.runCurrentRequest()
+        await waitUntil { coordinator.state.postResponseScriptState.status == .invalid }
+
+        let invocationCount = await executor.invocationCount
+        XCTAssertEqual(invocationCount, 1)
+        XCTAssertEqual(coordinator.globalLastExecutedRequest?.request.urlString, "https://example.com/first")
     }
 
     func testPostResponseScriptCommitsVariablesAfterHTTPResponse() async {
@@ -944,6 +977,95 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.listVariablesForCurrentContext().first(where: { $0.name == "token" })?.value, "next")
         XCTAssertEqual(coordinator.state.postResponseScriptState.changedVariableCount, 1)
         XCTAssertTrue(coordinator.state.postResponseScriptState.logs.first?.text.contains("saved next") == true)
+    }
+
+    func testScriptVariableWriteMarksResponseStaleWhenItChangesRequestResolution() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "before", scope: .global))
+        coordinator.setURL("https://example.com/items?token={{token}}")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(#"curly.variables.global.set("token", "after");"#)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+
+        XCTAssertEqual(request.urlString, "https://example.com/items?token=before")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+    }
+
+    func testRequestScopedScriptWriteWorksWithoutPersistenceAndPreservesWorkspace() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/no-storage")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(#"curly.variables.request.set("token", "value");"#)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+
+        XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://example.com/no-storage")
+        let variable = coordinator.listVariablesForCurrentContext().first { $0.name == "token" }
+        XCTAssertEqual(variable?.scope, .request)
+        XCTAssertEqual(variable?.value, "value")
+        XCTAssertNotNil(variable?.requestID)
+    }
+
+    func testHUDKeepsLastRunScriptFailureAfterWorkspaceReset() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/failing-script")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(#"throw new Error("boom");"#)
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(),
+            mimeType: nil,
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .failed }
+        coordinator.newWorkspace()
+
+        XCTAssertEqual(coordinator.hudStatusTitle, "Status 200")
+        XCTAssertEqual(coordinator.hudStatusSubtitle, "Response received. Post-response script failed.")
     }
 
     func testScriptUpdatedGlobalVariableIsResolvedByNextRequest() async {

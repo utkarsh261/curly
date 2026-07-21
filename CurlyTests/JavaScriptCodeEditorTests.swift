@@ -37,6 +37,26 @@ final class JavaScriptCodeEditorTests: XCTestCase {
         XCTAssertEqual(textView.string, #"curly.variables.request.set("token", "value")"#)
     }
 
+    func testProgrammaticReplacementClearsUndoHistoryBeforeRangesBecomeStale() {
+        let textView = UndoManagedTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        textView.string = "a"
+        textView.allowsUndo = true
+        guard let undoManager = textView.undoManager else {
+            return XCTFail("Expected an undo manager")
+        }
+        undoManager.registerUndo(withTarget: textView) { target in
+            target.string = "a"
+        }
+        XCTAssertTrue(undoManager.canUndo)
+
+        JavaScriptCodeEditorView.replaceContents(of: textView, with: "b")
+
+        XCTAssertEqual(textView.string, "b")
+        XCTAssertFalse(undoManager.canUndo)
+        undoManager.undo()
+        XCTAssertEqual(textView.string, "b")
+    }
+
     private func makeTextView(_ source: String) -> JavaScriptTextView {
         let textView = JavaScriptTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
         textView.string = source
@@ -51,4 +71,10 @@ final class JavaScriptCodeEditorTests: XCTestCase {
             granularity: .selectByWord
         )
     }
+}
+
+private final class UndoManagedTextView: NSTextView {
+    private let managedUndoManager = UndoManager()
+
+    override var undoManager: UndoManager? { managedUndoManager }
 }

@@ -13,6 +13,7 @@
 #define CQJS_STACK_LIMIT (512u * 1024u)
 #define CQJS_SOURCE_LIMIT (64u * 1024u)
 #define CQJS_VALUE_LIMIT (64u * 1024u)
+#define CQJS_JSON_BODY_LIMIT (8u * 1024u * 1024u)
 #define CQJS_LOG_LIMIT 50u
 #define CQJS_LOG_TEXT_LIMIT (2u * 1024u)
 #define CQJS_DEADLINE_NS 1000000000ull
@@ -125,9 +126,14 @@ static int cqjs_interrupt_handler(JSRuntime *runtime, void *opaque) {
     return cqjs_is_cancelled(state) || cqjs_is_timed_out(state);
 }
 
-static bool cqjs_valid_utf8(const uint8_t *bytes, size_t length) {
+static bool cqjs_valid_utf8(const CQJSRunState *state, const uint8_t *bytes, size_t length) {
     size_t index = 0;
+    size_t next_interrupt_check = 0;
     while (index < length) {
+        if (index >= next_interrupt_check) {
+            if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) return false;
+            next_interrupt_check = index + 4096u;
+        }
         uint8_t first = bytes[index++];
         if (first <= 0x7f) continue;
 
@@ -284,6 +290,17 @@ static void cqjs_result_set_message(CQJSResult *result, const char *message) {
     if (!result) return;
     free(result->message);
     result->message = message ? cqjs_copy_bytes(message, strlen(message)) : NULL;
+}
+
+static void cqjs_result_clear_writes(CQJSResult *result) {
+    if (!result) return;
+    for (size_t index = 0; index < result->write_count; index++) {
+        free(result->writes[index].name);
+        free(result->writes[index].value);
+    }
+    free(result->writes);
+    result->writes = NULL;
+    result->write_count = 0;
 }
 
 void CQJSResultDestroy(CQJSResult *result) {
@@ -656,7 +673,10 @@ static JSValue cqjs_response_text(JSContext *context, JSValueConst this_value, i
     CQJSRunState *state = JS_GetContextOpaque(context);
     if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) return JS_ThrowInternalError(context, "interrupted");
     if (!JS_IsUndefined(state->text_cache)) return JS_DupValue(context, state->text_cache);
-    if (!cqjs_valid_utf8(state->input->body, state->input->body_length)) return JS_ThrowTypeError(context, "Response body is not valid UTF-8.");
+    if (!cqjs_valid_utf8(state, state->input->body, state->input->body_length)) {
+        if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) return JS_ThrowInternalError(context, "interrupted");
+        return JS_ThrowTypeError(context, "Response body is not valid UTF-8.");
+    }
     state->text_cache = JS_NewStringLen(context, (const char *)state->input->body, state->input->body_length);
     return JS_DupValue(context, state->text_cache);
 }
@@ -667,14 +687,30 @@ static JSValue cqjs_response_json(JSContext *context, JSValueConst this_value, i
     if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) return JS_ThrowInternalError(context, "interrupted");
     if (!JS_IsUndefined(state->json_cache)) return JS_DupValue(context, state->json_cache);
     if (state->input->body_length == 0) return JS_ThrowSyntaxError(context, "Response body is empty.");
-    if (!cqjs_valid_utf8(state->input->body, state->input->body_length)) return JS_ThrowTypeError(context, "Response body is not valid UTF-8.");
+    if (state->input->body_length > CQJS_JSON_BODY_LIMIT) return JS_ThrowRangeError(context, "Response JSON exceeds the 8 MiB scripting limit.");
+    if (!cqjs_valid_utf8(state, state->input->body, state->input->body_length)) {
+        if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) return JS_ThrowInternalError(context, "interrupted");
+        return JS_ThrowTypeError(context, "Response body is not valid UTF-8.");
+    }
     /* QuickJS's JSON lexer reads a sentinel byte at buf[buf_len]. Swift Data only
        guarantees the requested byte range, so create that sentinel lazily and
        only for scripts that ask for JSON. */
-    char *terminated_body = cqjs_copy_bytes(state->input->body, state->input->body_length);
+    char *terminated_body = js_malloc(context, state->input->body_length + 1);
     if (!terminated_body) return JS_ThrowOutOfMemory(context);
+    memcpy(terminated_body, state->input->body, state->input->body_length);
+    terminated_body[state->input->body_length] = '\0';
     state->json_cache = JS_ParseJSON(context, terminated_body, state->input->body_length, "response.json");
-    free(terminated_body);
+    js_free(context, terminated_body);
+    if (cqjs_is_cancelled(state) || cqjs_is_timed_out(state)) {
+        if (JS_IsException(state->json_cache)) {
+            JSValue ignored = JS_GetException(context);
+            JS_FreeValue(context, ignored);
+        } else {
+            JS_FreeValue(context, state->json_cache);
+        }
+        state->json_cache = JS_UNDEFINED;
+        return JS_ThrowInternalError(context, "interrupted");
+    }
     if (JS_IsException(state->json_cache)) return JS_EXCEPTION;
     return JS_DupValue(context, state->json_cache);
 }
@@ -762,13 +798,25 @@ static void cqjs_parse_location(const char *stack, int *line, int *column) {
 
 static void cqjs_capture_exception(JSContext *context, CQJSResult *result) {
     JSValue exception = JS_GetException(context);
-    JSValue message_value = JS_GetPropertyStr(context, exception, "message");
-    const char *message = JS_ToCString(context, message_value);
+    JSValue message_value = JS_UNDEFINED;
+    const char *message = NULL;
+    if (JS_IsObject(exception)) {
+        message_value = JS_GetPropertyStr(context, exception, "message");
+        if (JS_IsException(message_value)) {
+            JSValue ignored = JS_GetException(context);
+            JS_FreeValue(context, ignored);
+            message_value = JS_UNDEFINED;
+        } else if (!JS_IsNull(message_value) && !JS_IsUndefined(message_value)) {
+            message = JS_ToCString(context, message_value);
+        }
+    }
     if (!message) message = JS_ToCString(context, exception);
     cqjs_result_set_message(result, message ? message : "Script execution failed.");
     if (message) JS_FreeCString(context, message);
 
-    JSValue stack_value = JS_GetPropertyStr(context, exception, "stack");
+    JSValue stack_value = JS_IsObject(exception)
+        ? JS_GetPropertyStr(context, exception, "stack")
+        : JS_UNDEFINED;
     const char *stack = JS_IsString(stack_value) ? JS_ToCString(context, stack_value) : NULL;
     cqjs_parse_location(stack, &result->line, &result->column);
     if (stack) JS_FreeCString(context, stack);
@@ -983,13 +1031,31 @@ static CQJSResult *cqjs_evaluate(
     }
     JS_FreeValue(context, execution);
 
+    if (cqjs_is_cancelled(&state)) {
+        result->status = CQJS_RESULT_CANCELLED;
+        cqjs_result_set_message(result, "Script execution was cancelled.");
+        goto cleanup;
+    }
+    if (cqjs_is_timed_out(&state)) {
+        result->status = CQJS_RESULT_TIMED_OUT;
+        cqjs_result_set_message(result, "Script exceeded the 1 second limit.");
+        goto cleanup;
+    }
+
     if (!cqjs_extract_staged(context, state.staged_global, CQJS_SCOPE_GLOBAL, result) ||
         !cqjs_extract_staged(context, state.staged_request, CQJS_SCOPE_REQUEST, result)) {
         result->status = CQJS_RESULT_FAILED;
         cqjs_result_set_message(result, "Could not collect staged variable writes.");
+    } else if (cqjs_is_cancelled(&state)) {
+        result->status = CQJS_RESULT_CANCELLED;
+        cqjs_result_set_message(result, "Script execution was cancelled.");
+    } else if (cqjs_is_timed_out(&state)) {
+        result->status = CQJS_RESULT_TIMED_OUT;
+        cqjs_result_set_message(result, "Script exceeded the 1 second limit.");
     }
 
 cleanup:
+    if (result->status != CQJS_RESULT_PASSED) cqjs_result_clear_writes(result);
     result->duration_ms = (int64_t)((cqjs_now_ns() - started_ns) / 1000000ull);
     cqjs_transfer_logs(&state, result);
     cqjs_free_state_values(context, &state);

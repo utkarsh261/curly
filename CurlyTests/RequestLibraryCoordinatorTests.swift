@@ -432,13 +432,111 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestAID)
     }
 
-    private func makeCoordinator() -> SessionCoordinator {
+    func testReselectingCurrentRequestDoesNotCancelActiveExecution() async {
+        let executor = CancellationTrackingRequestExecutor()
+        let coordinator = makeCoordinator(requestExecutor: executor)
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+        coordinator.setURL("https://example.com/slow")
+        guard let selectedID = coordinator.state.selectedSavedRequestID else {
+            return XCTFail("Expected a selected request")
+        }
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.isWaiting }
+        coordinator.selectSavedRequest(id: selectedID)
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let cancellationCount = await executor.cancellationCount
+        XCTAssertEqual(cancellationCount, 0)
+        XCTAssertEqual(coordinator.state.executionState, .running)
+        await executor.succeed()
+        await waitUntil { coordinator.state.executionState == .succeeded }
+    }
+
+    func testCachedScriptResultSurvivesSelectionValidationDebounce() async {
+        let executor = CancellationTrackingRequestExecutor()
+        let coordinator = makeCoordinator(requestExecutor: executor)
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+        coordinator.setURL("https://example.com/script")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(#"console.log("kept");"#)
+        guard let firstID = coordinator.state.selectedSavedRequestID else {
+            return XCTFail("Expected a selected request")
+        }
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.isWaiting }
+        await executor.succeed()
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+        XCTAssertEqual(coordinator.state.postResponseScriptState.logs.first?.text, "kept")
+
+        coordinator.createOrFocusHiddenNewDraft()
+        await waitUntil { coordinator.state.selectedSavedRequestID != firstID }
+        coordinator.selectSavedRequest(id: firstID)
+        try? await Task.sleep(for: .milliseconds(300))
+
+        XCTAssertEqual(coordinator.state.postResponseScriptState.status, .passed)
+        XCTAssertEqual(coordinator.state.postResponseScriptState.logs.first?.text, "kept")
+    }
+
+    func testRevertAndDuplicateValidateInvalidSavedScripts() async {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("const = ;")
+        coordinator.saveCurrentRequest()
+        coordinator.setPostResponseScriptSource("console.log('draft');")
+
+        coordinator.revertCurrentRequestDraft()
+        await waitUntil { coordinator.state.postResponseScriptState.status == .invalid }
+        XCTAssertNotNil(coordinator.state.postResponseScriptState.diagnostic)
+
+        coordinator.duplicateSelectedRequest()
+        await waitUntil { coordinator.state.postResponseScriptState.status == .invalid }
+        XCTAssertNotNil(coordinator.state.postResponseScriptState.diagnostic)
+    }
+
+    func testScriptBatchWaitsForEarlierVariablePersistence() async throws {
+        let repository = OrderedVariableRepository()
+        let initial = Variable(name: "token", value: "initial", scope: .global)
+        try await repository.saveVariable(initial)
+        let executor = CancellationTrackingRequestExecutor()
+        let coordinator = makeCoordinator(
+            requestExecutor: executor,
+            scriptRunner: FixedWriteScriptRunner(),
+            variables: repository
+        )
+        await waitUntil { coordinator.state.variables.count == 1 }
+        await repository.delayNextSave()
+
+        XCTAssertNotNil(coordinator.updateVariableValue(id: initial.id, value: "manual"))
+        await waitUntil { await repository.isSaveBlocked }
+        coordinator.setURL("https://example.com/order")
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource("write token")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.isWaiting }
+        await executor.succeed()
+        try? await Task.sleep(for: .milliseconds(50))
+
+        let batchCount = await repository.batchCount
+        XCTAssertEqual(batchCount, 0)
+        await repository.releaseSave()
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+        let persistedValue = await repository.value(named: "token")
+        XCTAssertEqual(persistedValue, "script")
+    }
+
+    private func makeCoordinator(
+        requestExecutor: RequestExecuting = URLSessionRequestExecutor(),
+        scriptRunner: PostResponseScriptRunning = QuickJSPostResponseScriptRunner(),
+        variables: VariableRepository = InMemoryVariableRepository()
+    ) -> SessionCoordinator {
         let saved = InMemorySavedRequestRepository()
         let drafts = InMemoryRequestDraftRepository()
         let hidden = InMemoryHiddenNewDraftRepository()
         let summaries = InMemoryExecutionSummaryRepository()
         let selection = InMemorySessionSelectionRepository()
-        let variables = InMemoryVariableRepository()
         let facade = InMemoryWorkspaceRepositoryFacade(savedRequests: saved, drafts: drafts, summaries: summaries, variables: variables)
         let dependencies = RequestLibraryDependencies(
             savedRequests: saved,
@@ -449,7 +547,11 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
             workspaceFacade: facade,
             variables: variables
         )
-        return SessionCoordinator(requestLibrary: dependencies)
+        return SessionCoordinator(
+            requestExecutor: requestExecutor,
+            scriptRunner: scriptRunner,
+            requestLibrary: dependencies
+        )
     }
 
     private func makeFileBackedCoordinator(fileURL: URL) throws -> SessionCoordinator {
@@ -477,17 +579,135 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
     private func waitUntil(
         _ description: String = "condition",
         timeout: TimeInterval = 2.0,
-        condition: @escaping () -> Bool
+        condition: @escaping @MainActor () async -> Bool
     ) async {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if condition() {
+            if await condition() {
                 return
             }
             await Task.yield()
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTAssertTrue(condition(), "Timed out waiting for \(description) after \(timeout) seconds.")
+        let finalValue = await condition()
+        XCTAssertTrue(finalValue, "Timed out waiting for \(description) after \(timeout) seconds.")
+    }
+}
+
+private actor CancellationTrackingRequestExecutor: RequestExecuting {
+    private var request: Request?
+    private var continuation: CheckedContinuation<ExecutedResponse, Error>?
+    private(set) var cancellationCount = 0
+
+    var isWaiting: Bool { continuation != nil }
+
+    func execute(_ request: Request) async throws -> ExecutedResponse {
+        self.request = request
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+            }
+        } onCancel: {
+            Task { await self.cancel() }
+        }
+    }
+
+    func succeed() {
+        guard let request, let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(#"{"ok":true}"#.utf8),
+            mimeType: "application/json",
+            duration: 0.01,
+            timestamp: Date()
+        ))
+    }
+
+    private func cancel() {
+        guard let continuation else { return }
+        self.continuation = nil
+        cancellationCount += 1
+        continuation.resume(throwing: CancellationError())
+    }
+}
+
+private struct FixedWriteScriptRunner: PostResponseScriptRunning {
+    func validate(source: String) async -> ScriptValidationResult { .valid }
+
+    func run(_ input: PostResponseScriptInput) async -> PostResponseScriptRunResult {
+        PostResponseScriptRunResult(
+            outcome: .passed,
+            diagnostic: nil,
+            durationMs: 1,
+            writes: [ScriptVariableWrite(scope: .global, name: "token", value: "script")],
+            logs: [],
+            logsWereTruncated: false
+        )
+    }
+}
+
+private actor OrderedVariableRepository: VariableRepository {
+    private var variablesByID: [UUID: Variable] = [:]
+    private var shouldDelayNextSave = false
+    private var saveContinuation: CheckedContinuation<Void, Never>?
+    private(set) var batchCount = 0
+
+    var isSaveBlocked: Bool { saveContinuation != nil }
+
+    func delayNextSave() {
+        shouldDelayNextSave = true
+    }
+
+    func releaseSave() {
+        saveContinuation?.resume()
+        saveContinuation = nil
+    }
+
+    func value(named name: String) -> String? {
+        variablesByID.values.first { $0.name == name }?.value
+    }
+
+    func listVariables() async throws -> [Variable] { Array(variablesByID.values) }
+
+    func saveVariable(_ variable: Variable) async throws {
+        if shouldDelayNextSave {
+            shouldDelayNextSave = false
+            await withCheckedContinuation { continuation in
+                saveContinuation = continuation
+            }
+        }
+        variablesByID[variable.id] = variable
+    }
+
+    func deleteVariable(id: UUID) async throws { variablesByID[id] = nil }
+
+    func deleteVariables(forRequestID requestID: UUID) async throws {
+        variablesByID = variablesByID.filter { $0.value.requestID != requestID }
+    }
+
+    func migrateVariables(from oldRequestID: UUID, to newRequestID: UUID) async throws {
+        for (id, variable) in variablesByID where variable.requestID == oldRequestID {
+            var migrated = variable
+            migrated.requestID = newRequestID
+            variablesByID[id] = migrated
+        }
+    }
+
+    func applyVariableBatch(_ batch: VariableBatch) async throws -> VariableBatchCommit {
+        batchCount += 1
+        var changed: [Variable] = []
+        for mutation in batch.mutations {
+            if var existing = variablesByID.values.first(where: { $0.name == mutation.name }) {
+                existing.value = mutation.value
+                existing.updatedAt = batch.committedAt
+                variablesByID[existing.id] = existing
+                changed.append(existing)
+            }
+        }
+        return VariableBatchCommit(changedVariables: changed)
     }
 }
 

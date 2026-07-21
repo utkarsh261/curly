@@ -86,7 +86,7 @@ struct JavaScriptCodeEditorView: NSViewRepresentable {
                 ))
             }
             context.coordinator.isProgrammaticUpdate = true
-            textView.string = text
+            JavaScriptCodeEditorView.replaceContents(of: textView, with: text)
             textView.selectedRanges = selectedRanges.isEmpty
                 ? [NSValue(range: NSRange(location: replacementLength, length: 0))]
                 : selectedRanges
@@ -94,6 +94,14 @@ struct JavaScriptCodeEditorView: NSViewRepresentable {
         }
 
         textView.isEditable = isEditable
+    }
+
+    static func replaceContents(of textView: NSTextView, with text: String) {
+        textView.breakUndoCoalescing()
+        textView.undoManager?.removeAllActions()
+        textView.string = text
+        textView.breakUndoCoalescing()
+        textView.undoManager?.removeAllActions()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
