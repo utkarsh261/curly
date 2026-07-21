@@ -722,13 +722,19 @@ struct InlineMessage: Equatable {
 enum RequestEditorSection: Equatable {
     case headers
     case body
+    case postResponseScript
 }
 
 struct RequestEditorExpansionState: Equatable {
     var headersExpanded: Bool
     var bodyExpanded: Bool
+    var postResponseScriptExpanded: Bool
 
-    static let allExpanded = RequestEditorExpansionState(headersExpanded: true, bodyExpanded: true)
+    static let allExpanded = RequestEditorExpansionState(
+        headersExpanded: true,
+        bodyExpanded: true,
+        postResponseScriptExpanded: false
+    )
 
     mutating func toggle(_ section: RequestEditorSection) {
         switch section {
@@ -736,13 +742,51 @@ struct RequestEditorExpansionState: Equatable {
             headersExpanded.toggle()
         case .body:
             bodyExpanded.toggle()
+        case .postResponseScript:
+            postResponseScriptExpanded.toggle()
         }
     }
+}
+
+enum PostResponseScriptStatus: Equatable {
+    case off
+    case ready
+    case invalid
+    case running
+    case passed
+    case failed
+    case stale
+}
+
+struct PostResponseScriptState: Equatable {
+    var status: PostResponseScriptStatus
+    var diagnostic: ScriptDiagnostic?
+    var logs: [ScriptLogEntry]
+    var durationMs: Int?
+    var changedVariableCount: Int
+
+    static let off = PostResponseScriptState(
+        status: .off,
+        diagnostic: nil,
+        logs: [],
+        durationMs: nil,
+        changedVariableCount: 0
+    )
+
+    static let ready = PostResponseScriptState(
+        status: .ready,
+        diagnostic: nil,
+        logs: [],
+        durationMs: nil,
+        changedVariableCount: 0
+    )
 }
 
 struct SessionState: Equatable {
     var workspaceRequest: Request
     var workspaceName: String
+    var requestAutomation: RequestAutomation
+    var postResponseScriptState: PostResponseScriptState
     var requestListItems: [RequestListItem]
     var isLibraryCollapsed: Bool
     var selectedSavedRequestID: UUID?
@@ -765,6 +809,8 @@ struct SessionState: Equatable {
     init(
         workspaceRequest: Request,
         workspaceName: String = "Untitled Request",
+        requestAutomation: RequestAutomation = .none,
+        postResponseScriptState: PostResponseScriptState = .off,
         requestListItems: [RequestListItem] = [],
         isLibraryCollapsed: Bool = false,
         selectedSavedRequestID: UUID? = nil,
@@ -787,6 +833,8 @@ struct SessionState: Equatable {
     ) {
         self.workspaceRequest = workspaceRequest
         self.workspaceName = workspaceName
+        self.requestAutomation = requestAutomation
+        self.postResponseScriptState = postResponseScriptState
         self.requestListItems = requestListItems
         self.isLibraryCollapsed = isLibraryCollapsed
         self.selectedSavedRequestID = selectedSavedRequestID
@@ -810,6 +858,8 @@ struct SessionState: Equatable {
     static let initial = SessionState(
         workspaceRequest: .empty,
         workspaceName: "Untitled Request",
+        requestAutomation: .none,
+        postResponseScriptState: .off,
         requestListItems: [],
         isLibraryCollapsed: false,
         selectedSavedRequestID: nil,
@@ -845,7 +895,7 @@ struct SessionState: Equatable {
     }
 
     var canRun: Bool {
-        guard executionState != .running else {
+        guard executionState != .running, postResponseScriptState.status != .running else {
             return false
         }
         let trimmedURL = workspaceRequest.urlString.trimmingCharacters(in: .whitespacesAndNewlines)

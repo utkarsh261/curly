@@ -34,8 +34,14 @@ jobs:
       - name: Install dependencies
         run: brew install just create-dmg
 
+      - name: Verify vendored QuickJS-NG
+        run: just verify-quickjs-vendor
+
       - name: Run unit tests
         run: just test-unit-ci
+
+      - name: Run post-response script UI automation
+        run: just test-scripting
 
       - name: Build DMG
         run: just package-dmg-styled-free

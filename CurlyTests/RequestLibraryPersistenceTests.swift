@@ -268,6 +268,139 @@ final class RequestLibraryPersistenceTests: XCTestCase {
         XCTAssertEqual(reloadedVariables, [variable])
     }
 
+    func testInMemoryVariableBatchIsAtomicAndCountsOnlyChanges() async throws {
+        let repository = InMemoryVariableRepository()
+        let existing = Variable(
+            name: "token",
+            value: "before",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        let requestVariable = Variable(
+            name: "local",
+            value: "request",
+            scope: .request,
+            requestID: UUID(),
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        )
+        try await repository.saveVariable(existing)
+        try await repository.saveVariable(requestVariable)
+
+        let failedBatch = VariableBatch(
+            mutations: [
+                .init(scope: .global, name: "token", value: "after", requestID: nil),
+                .init(scope: .global, name: "local", value: "conflict", requestID: nil)
+            ],
+            committedAt: Date(timeIntervalSince1970: 200)
+        )
+        do {
+            _ = try await repository.applyVariableBatch(failedBatch)
+            XCTFail("Expected a scope conflict")
+        } catch let error as VariableBatchError {
+            XCTAssertEqual(error, .scopeConflict("local"))
+        }
+        let variablesAfterFailure = try await repository.listVariables()
+        XCTAssertEqual(
+            variablesAfterFailure.sorted { $0.name < $1.name },
+            [existing, requestVariable].sorted { $0.name < $1.name }
+        )
+
+        let successfulBatch = VariableBatch(
+            mutations: [
+                .init(scope: .global, name: "token", value: "before", requestID: nil),
+                .init(scope: .global, name: "created", value: "value", requestID: nil)
+            ],
+            committedAt: Date(timeIntervalSince1970: 300)
+        )
+        let commit = try await repository.applyVariableBatch(successfulBatch)
+        XCTAssertEqual(commit.changedVariables.map(\.name), ["created"])
+    }
+
+    func testFileVariableBatchRollsBackConflictingMutationsOnDisk() async throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("curly-variable-batch-\(UUID().uuidString)")
+            .appendingPathExtension("json")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let repository = try FileRequestLibraryRepositories(fileURL: fileURL)
+        let timestamp = Date(timeIntervalSince1970: 1_700_002_000)
+        let existing = Variable(
+            name: "token",
+            value: "before",
+            scope: .global,
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        let requestVariable = Variable(
+            name: "local",
+            value: "request",
+            scope: .request,
+            requestID: UUID(),
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        try await repository.saveVariable(existing)
+        try await repository.saveVariable(requestVariable)
+
+        do {
+            _ = try await repository.applyVariableBatch(VariableBatch(
+                mutations: [
+                    .init(scope: .global, name: "token", value: "after", requestID: nil),
+                    .init(scope: .global, name: "local", value: "conflict", requestID: nil)
+                ],
+                committedAt: Date()
+            ))
+            XCTFail("Expected a scope conflict")
+        } catch let error as VariableBatchError {
+            XCTAssertEqual(error, .scopeConflict("local"))
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        let persisted = try decoder.decode(FileRequestLibraryContainer.self, from: Data(contentsOf: fileURL))
+        XCTAssertEqual(
+            persisted.variables.sorted { $0.name < $1.name },
+            [existing, requestVariable].sorted { $0.name < $1.name }
+        )
+    }
+
+    func testLegacySavedRequestAndDraftDecodeWithAutomationDisabled() throws {
+        let timestamp = Date(timeIntervalSince1970: 1_700_001_000)
+        let saved = SavedRequest(
+            id: UUID(),
+            name: "Legacy",
+            request: Request(method: .get, urlString: "https://example.com", headers: [], body: .none),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            lastEditedAt: timestamp,
+            nameWasManuallyEdited: true
+        )
+        let draft = RequestDraft(
+            requestID: saved.id,
+            snapshot: EditableRequestSnapshot(name: saved.name, request: saved.request),
+            lastEditedAt: timestamp,
+            baseSavedUpdatedAt: timestamp,
+            draftBaseOutdated: false
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+
+        var savedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(saved)) as? [String: Any])
+        savedObject.removeValue(forKey: "automation")
+        let decodedSaved = try decoder.decode(SavedRequest.self, from: JSONSerialization.data(withJSONObject: savedObject))
+        XCTAssertEqual(decodedSaved.automation, .none)
+
+        var draftObject = try XCTUnwrap(JSONSerialization.jsonObject(with: encoder.encode(draft)) as? [String: Any])
+        var snapshotObject = try XCTUnwrap(draftObject["snapshot"] as? [String: Any])
+        snapshotObject.removeValue(forKey: "automation")
+        draftObject["snapshot"] = snapshotObject
+        let decodedDraft = try decoder.decode(RequestDraft.self, from: JSONSerialization.data(withJSONObject: draftObject))
+        XCTAssertEqual(decodedDraft.snapshot.automation, .none)
+    }
+
     func testFileStoreMigrationMergesLegacyRequestsAndDropsGeneratedPlaceholder() throws {
         let placeholder = SavedRequest(
             id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!,

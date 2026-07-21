@@ -377,6 +377,43 @@ actor FileRequestLibraryRepositories: SavedRequestRepository, RequestDraftReposi
         }
         try persist()
     }
+
+    func applyVariableBatch(_ batch: VariableBatch) async throws -> VariableBatchCommit {
+        var candidate = container
+        var changed: [Variable] = []
+
+        for mutation in batch.mutations {
+            if let index = candidate.variables.firstIndex(where: { $0.name == mutation.name }) {
+                let existing = candidate.variables[index]
+                guard existing.scope == mutation.scope,
+                      existing.requestID == mutation.requestID else {
+                    throw VariableBatchError.scopeConflict(mutation.name)
+                }
+                guard existing.value != mutation.value else { continue }
+                var updated = existing
+                updated.value = mutation.value
+                updated.updatedAt = batch.committedAt
+                candidate.variables[index] = updated
+                changed.append(updated)
+            } else {
+                let created = Variable(
+                    name: mutation.name,
+                    value: mutation.value,
+                    scope: mutation.scope,
+                    requestID: mutation.requestID,
+                    createdAt: batch.committedAt,
+                    updatedAt: batch.committedAt
+                )
+                candidate.variables.append(created)
+                changed.append(created)
+            }
+        }
+
+        let data = try encoder.encode(candidate)
+        try data.write(to: fileURL, options: .atomic)
+        container = candidate
+        return VariableBatchCommit(changedVariables: changed)
+    }
 }
 
 private extension ExecutionSummary {

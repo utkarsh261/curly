@@ -41,4 +41,21 @@ protocol VariableRepository: Sendable {
     func deleteVariable(id: UUID) async throws
     func deleteVariables(forRequestID requestID: UUID) async throws
     func migrateVariables(from oldRequestID: UUID, to newRequestID: UUID) async throws
+    func applyVariableBatch(_ batch: VariableBatch) async throws -> VariableBatchCommit
+}
+
+struct VariableBatch: Sendable, Equatable {
+    struct SetMutation: Sendable, Equatable {
+        var scope: VariableScope
+        var name: String
+        var value: String
+        var requestID: UUID?
+    }
+
+    var mutations: [SetMutation]
+    var committedAt: Date
+}
+
+struct VariableBatchCommit: Sendable, Equatable {
+    var changedVariables: [Variable]
 }
