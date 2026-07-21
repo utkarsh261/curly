@@ -180,8 +180,10 @@ struct WorkspaceRootView: View {
                 .padding(.bottom, WorkspaceLayout.panePadding)
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .topLeading)
             }
+            .accessibilityIdentifier("request-pane-scroll-view")
         }
         .background(WorkspaceBackdrop())
+        .clipped()
     }
 
     private var variablesModalOverlay: some View {
