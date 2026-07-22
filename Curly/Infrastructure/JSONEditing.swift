@@ -24,31 +24,46 @@ struct JSONToken: Equatable {
 
 enum JSONLexer {
     static func tokenize(_ text: String) -> [JSONToken] {
-        let source = text as NSString
         var tokens: [JSONToken] = []
+        _ = forEachToken(in: text) { token in
+            tokens.append(token)
+            return true
+        }
+        return tokens
+    }
+
+    /// Streams tokens to `visit` and stops immediately when it returns false.
+    /// Production consumers use this to avoid allocating one array element per token.
+    @discardableResult
+    static func forEachToken(in text: String, _ visit: (JSONToken) -> Bool) -> Bool {
+        let source = text as NSString
         var index = 0
+
+        func emit(_ kind: JSONTokenKind, location: Int, length: Int) -> Bool {
+            visit(JSONToken(kind: kind, range: NSRange(location: location, length: length)))
+        }
 
         while index < source.length {
             let char = source.character(at: index)
 
             switch char {
             case 0x7B:
-                tokens.append(JSONToken(kind: .leftBrace, range: NSRange(location: index, length: 1)))
+                guard emit(.leftBrace, location: index, length: 1) else { return false }
                 index += 1
             case 0x7D:
-                tokens.append(JSONToken(kind: .rightBrace, range: NSRange(location: index, length: 1)))
+                guard emit(.rightBrace, location: index, length: 1) else { return false }
                 index += 1
             case 0x5B:
-                tokens.append(JSONToken(kind: .leftBracket, range: NSRange(location: index, length: 1)))
+                guard emit(.leftBracket, location: index, length: 1) else { return false }
                 index += 1
             case 0x5D:
-                tokens.append(JSONToken(kind: .rightBracket, range: NSRange(location: index, length: 1)))
+                guard emit(.rightBracket, location: index, length: 1) else { return false }
                 index += 1
             case 0x3A:
-                tokens.append(JSONToken(kind: .colon, range: NSRange(location: index, length: 1)))
+                guard emit(.colon, location: index, length: 1) else { return false }
                 index += 1
             case 0x2C:
-                tokens.append(JSONToken(kind: .comma, range: NSRange(location: index, length: 1)))
+                guard emit(.comma, location: index, length: 1) else { return false }
                 index += 1
             case 0x22:
                 let start = index
@@ -67,7 +82,7 @@ enum JSONLexer {
                     }
                     index += 1
                 }
-                tokens.append(JSONToken(kind: .string, range: NSRange(location: start, length: index - start)))
+                guard emit(.string, location: start, length: index - start) else { return false }
             case 0x2F where index + 1 < source.length && source.character(at: index + 1) == 0x2F:
                 let start = index
                 index += 2
@@ -78,7 +93,7 @@ enum JSONLexer {
                     }
                     index += 1
                 }
-                tokens.append(JSONToken(kind: .lineComment, range: NSRange(location: start, length: index - start)))
+                guard emit(.lineComment, location: start, length: index - start) else { return false }
             case 0x2F where index + 1 < source.length && source.character(at: index + 1) == 0x2A:
                 let start = index
                 index += 2
@@ -89,7 +104,7 @@ enum JSONLexer {
                     }
                     index += 1
                 }
-                tokens.append(JSONToken(kind: .blockComment, range: NSRange(location: start, length: index - start)))
+                guard emit(.blockComment, location: start, length: index - start) else { return false }
             case 0x20, 0x09, 0x0A, 0x0D:
                 let start = index
                 index += 1
@@ -107,40 +122,40 @@ enum JSONLexer {
                         }
                     }
                 }
-                tokens.append(JSONToken(kind: .whitespace, range: NSRange(location: start, length: index - start)))
+                guard emit(.whitespace, location: start, length: index - start) else { return false }
             case 0x2D, 0x30...0x39:
                 let start = index
                 index += 1
                 while index < source.length, isNumberContinuation(source.character(at: index)) {
                     index += 1
                 }
-                tokens.append(JSONToken(kind: .number, range: NSRange(location: start, length: index - start)))
+                guard emit(.number, location: start, length: index - start) else { return false }
             case 0x74 where index + 3 < source.length &&
                 source.character(at: index + 1) == 0x72 &&
                 source.character(at: index + 2) == 0x75 &&
                 source.character(at: index + 3) == 0x65:
-                tokens.append(JSONToken(kind: .boolLiteral, range: NSRange(location: index, length: 4)))
+                guard emit(.boolLiteral, location: index, length: 4) else { return false }
                 index += 4
             case 0x66 where index + 4 < source.length &&
                 source.character(at: index + 1) == 0x61 &&
                 source.character(at: index + 2) == 0x6C &&
                 source.character(at: index + 3) == 0x73 &&
                 source.character(at: index + 4) == 0x65:
-                tokens.append(JSONToken(kind: .boolLiteral, range: NSRange(location: index, length: 5)))
+                guard emit(.boolLiteral, location: index, length: 5) else { return false }
                 index += 5
             case 0x6E where index + 3 < source.length &&
                 source.character(at: index + 1) == 0x75 &&
                 source.character(at: index + 2) == 0x6C &&
                 source.character(at: index + 3) == 0x6C:
-                tokens.append(JSONToken(kind: .nullLiteral, range: NSRange(location: index, length: 4)))
+                guard emit(.nullLiteral, location: index, length: 4) else { return false }
                 index += 4
             default:
-                tokens.append(JSONToken(kind: .other, range: NSRange(location: index, length: 1)))
+                guard emit(.other, location: index, length: 1) else { return false }
                 index += 1
             }
         }
 
-        return tokens
+        return true
     }
 
     private static func isNumberContinuation(_ character: unichar) -> Bool {
@@ -157,8 +172,15 @@ enum JSONCommentStripper {
     static func stripComments(from text: String) -> String {
         autoreleasepool {
             let mutable = NSMutableString(string: text)
-            for token in JSONLexer.tokenize(text).reversed() where token.kind == .lineComment || token.kind == .blockComment {
-                mutable.deleteCharacters(in: token.range)
+            var commentRanges: [NSRange] = []
+            JSONLexer.forEachToken(in: text) { token in
+                if token.kind == .lineComment || token.kind == .blockComment {
+                    commentRanges.append(token.range)
+                }
+                return true
+            }
+            for range in commentRanges.reversed() {
+                mutable.deleteCharacters(in: range)
             }
             return mutable as String
         }
@@ -333,22 +355,25 @@ enum JSONTrailingCommaDetector {
     static func trailingCommaRange(in text: String) -> NSRange? {
         autoreleasepool {
             var previousSignificantToken: JSONToken?
+            var result: NSRange?
 
-            for token in JSONLexer.tokenize(text) {
+            JSONLexer.forEachToken(in: text) { token in
                 switch token.kind {
                 case .whitespace, .lineComment, .blockComment:
-                    continue
+                    return true
                 case .rightBrace, .rightBracket:
                     if previousSignificantToken?.kind == .comma {
-                        return previousSignificantToken?.range
+                        result = previousSignificantToken?.range
+                        return false
                     }
                     previousSignificantToken = token
                 default:
                     previousSignificantToken = token
                 }
+                return true
             }
 
-            return nil
+            return result
         }
     }
 }
@@ -800,13 +825,12 @@ struct JSONFoldRange: Equatable {
 }
 
 enum JSONFoldIndex {
-    static func foldRanges(in text: String, tokens: [JSONToken]? = nil, lineMap: JSONLineMap? = nil) -> [JSONFoldRange] {
+    static func foldRanges(in text: String, lineMap: JSONLineMap? = nil) -> [JSONFoldRange] {
         let resolvedLineMap = lineMap ?? JSONLineMap(text: text)
-        let resolvedTokens = tokens ?? JSONLexer.tokenize(text)
         var stack: [(kind: JSONFoldKind, tokenRange: NSRange)] = []
         var ranges: [JSONFoldRange] = []
 
-        for token in resolvedTokens {
+        JSONLexer.forEachToken(in: text) { token in
             switch token.kind {
             case .leftBrace:
                 stack.append((kind: .object, tokenRange: token.range))
@@ -817,8 +841,9 @@ enum JSONFoldIndex {
             case .rightBracket:
                 appendRangeIfMatched(kind: .array, closeRange: token.range, lineMap: resolvedLineMap, stack: &stack, ranges: &ranges)
             default:
-                continue
+                break
             }
+            return true
         }
 
         return ranges.sorted { $0.fullRange.location < $1.fullRange.location }
@@ -904,6 +929,14 @@ struct JSONLineMap: Equatable {
     }
 }
 
+struct JSONFormattingError: LocalizedError {
+    let validationResult: JSONValidationResult
+
+    var errorDescription: String? {
+        validationResult.errorMessage ?? "The JSON body is invalid."
+    }
+}
+
 enum JSONFormatter {
     static func format(_ text: String, indentation: Int = 2) throws -> String {
         try transform(text, indentation: indentation, style: .pretty)
@@ -918,22 +951,11 @@ enum JSONFormatter {
         case compact
     }
 
-    private enum FormattingError: LocalizedError {
-        case invalidJSON(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .invalidJSON(let message):
-                return message
-            }
-        }
-    }
-
     private static func transform(_ text: String, indentation: Int, style: Style) throws -> String {
         try autoreleasepool {
             let validation = JSONValidator.validate(text)
             guard validation.isValid else {
-                throw FormattingError.invalidJSON(validation.errorMessage ?? "The JSON body is invalid.")
+                throw JSONFormattingError(validationResult: validation)
             }
 
             let commentLines = fullLineCommentPlacements(in: text)
@@ -1018,21 +1040,16 @@ enum JSONFormatter {
 }
 
 struct SyntaxAnalysisResult: Equatable {
-    let text: String
-    let tokens: [JSONToken]
     let lineMap: JSONLineMap
     let foldRanges: [JSONFoldRange]
 
     static func analyze(_ text: String) -> SyntaxAnalysisResult {
-        let tokens = JSONLexer.tokenize(text)
         let lineMap = JSONLineMap(text: text)
-        let foldRanges = JSONFoldIndex.foldRanges(in: text, tokens: tokens, lineMap: lineMap)
-        return SyntaxAnalysisResult(text: text, tokens: tokens, lineMap: lineMap, foldRanges: foldRanges)
+        let foldRanges = JSONFoldIndex.foldRanges(in: text, lineMap: lineMap)
+        return SyntaxAnalysisResult(lineMap: lineMap, foldRanges: foldRanges)
     }
 
     static let empty = SyntaxAnalysisResult(
-        text: "",
-        tokens: [],
         lineMap: JSONLineMap(text: ""),
         foldRanges: []
     )

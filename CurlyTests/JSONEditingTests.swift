@@ -293,6 +293,29 @@ final class JSONEditingTests: XCTestCase {
         XCTAssertEqual(tokens4.filter { $0.kind == .boolLiteral }.count, 1) // the unquoted true
     }
 
+    func testStreamingLexerMatchesMaterializedTokensAndCanStopEarly() {
+        let text = #"{"url":"https://example.com","items":[true, null, -12.5],/* note */"ok":false}"#
+        let expected = JSONLexer.tokenize(text)
+        var streamed: [JSONToken] = []
+
+        let completed = JSONLexer.forEachToken(in: text) { token in
+            streamed.append(token)
+            return true
+        }
+
+        XCTAssertTrue(completed)
+        XCTAssertEqual(streamed, expected)
+
+        var visited = 0
+        let stoppedEarly = JSONLexer.forEachToken(in: String(repeating: "0,", count: 100_000)) { _ in
+            visited += 1
+            return visited < 3
+        }
+
+        XCTAssertFalse(stoppedEarly)
+        XCTAssertEqual(visited, 3)
+    }
+
     func testConsolidatedAnalysisMatchesDiscreteParsing() {
         let text = """
         {
@@ -311,18 +334,21 @@ final class JSONEditingTests: XCTestCase {
         // 1. Run consolidated analysis
         let analysis = SyntaxAnalysisResult.analyze(text)
         
-        // 2. Run discrete parsing
-        let expectedTokens = JSONLexer.tokenize(text)
+        // 2. Run discrete structural parsing
         let expectedLineMap = JSONLineMap(text: text)
         let expectedFoldRanges = JSONFoldIndex.foldRanges(in: text)
         
-        // 3. Assert exact equality
-        XCTAssertEqual(analysis.tokens, expectedTokens, "Consolidated tokens should perfectly match discrete tokens")
+        // 3. Assert exact equality without retaining source text or lexer tokens.
         XCTAssertEqual(analysis.lineMap, expectedLineMap, "Consolidated line map should perfectly match discrete line map")
         XCTAssertEqual(analysis.foldRanges, expectedFoldRanges, "Consolidated fold ranges should perfectly match discrete fold ranges")
+        XCTAssertEqual(
+            Set(Mirror(reflecting: analysis).children.compactMap(\.label)),
+            Set(["lineMap", "foldRanges"]),
+            "Persistent analysis must remain structural-only so highlighting cannot retain a token per character."
+        )
     }
     
-    func testFoldRangesConsumesPrecalculatedInputs() {
+    func testFoldRangesConsumesPrecalculatedLineMap() {
         let text = """
         {
           "arr": [1, 2, 3],
@@ -332,16 +358,31 @@ final class JSONEditingTests: XCTestCase {
         }
         """
         
-        let tokens = JSONLexer.tokenize(text)
         let lineMap = JSONLineMap(text: text)
         
-        // Pass precalculated inputs
-        let foldRangesWithInputs = JSONFoldIndex.foldRanges(in: text, tokens: tokens, lineMap: lineMap)
+        // Pass the shared line map while tokens continue to stream.
+        let foldRangesWithInputs = JSONFoldIndex.foldRanges(in: text, lineMap: lineMap)
         
         // Pass no precalculated inputs
         let foldRangesWithoutInputs = JSONFoldIndex.foldRanges(in: text)
         
         XCTAssertEqual(foldRangesWithInputs, foldRangesWithoutInputs, "Passing precalculated inputs should produce identical results")
+    }
+
+    func testFormatterInvalidErrorPreservesLocatedValidationResult() throws {
+        let source = """
+        {
+          "bad" nope
+        }
+        """
+
+        XCTAssertThrowsError(try JSONFormatter.format(source)) { error in
+            guard let formattingError = error as? JSONFormattingError else {
+                return XCTFail("Expected JSONFormattingError, got \(error)")
+            }
+            XCTAssertEqual(formattingError.validationResult.diagnostic?.line, 2)
+            XCTAssertEqual(formattingError.validationResult.diagnostic?.column, 9)
+        }
     }
 
     func testLineMapLineNumberLookup() {

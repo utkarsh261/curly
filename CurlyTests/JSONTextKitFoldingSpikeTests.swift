@@ -161,7 +161,58 @@ final class JSONTextKitFoldingSpikeTests: XCTestCase {
     }
 
     @MainActor
-    private func makeEditorHarness(source: String, foldedRanges: [NSRange] = []) -> EditorHarness {
+    func testReadOnlyHighlightingStylesOnlyTheViewportRange() throws {
+        let middle = (0..<2_000).map { "  \"item\($0)\": \($0)," }.joined(separator: "\n")
+        let source = "{\n  \"first\": true,\n\(middle)\n  \"last\": null\n}"
+        let harness = makeEditorHarness(source: source, highlightsVisibleRangeOnly: true)
+        let requestedRange = NSRange(location: 0, length: (source as NSString).range(of: "\"item5\"").location)
+
+        harness.coordinator.applyHighlighting(
+            to: harness.textView,
+            using: harness.coordinator.latestAnalysis,
+            visibleCharacterRange: requestedRange
+        )
+
+        let highlightedRange = try XCTUnwrap(harness.coordinator.highlightedRange)
+        XCTAssertLessThan(NSMaxRange(highlightedRange), (source as NSString).length)
+        XCTAssertEqual(
+            harness.textView.textStorage?.attribute(
+                .foregroundColor,
+                at: (source as NSString).range(of: "\"first\"").location,
+                effectiveRange: nil
+            ) as? NSColor,
+            NSColor.systemGreen
+        )
+        XCTAssertEqual(
+            harness.textView.textStorage?.attribute(
+                .foregroundColor,
+                at: (source as NSString).range(of: "\"last\"").location,
+                effectiveRange: nil
+            ) as? NSColor,
+            NSColor.labelColor
+        )
+    }
+
+    @MainActor
+    func testReadOnlyEditorSelectsViewportHighlightingMode() {
+        let editor = JSONCodeEditorView(
+            text: .constant(#"{"ok":true}"#),
+            foldedRanges: .constant([]),
+            isEditable: false,
+            accessibilityIdentifier: "read-only-json",
+            diagnostic: nil,
+            revealDiagnosticGeneration: 0
+        )
+
+        XCTAssertTrue(editor.makeCoordinator().highlightsVisibleRangeOnly)
+    }
+
+    @MainActor
+    private func makeEditorHarness(
+        source: String,
+        foldedRanges: [NSRange] = [],
+        highlightsVisibleRangeOnly: Bool = false
+    ) -> EditorHarness {
         let state = EditorState(text: source, foldedRanges: foldedRanges)
         let textBinding = Binding(
             get: { state.text },
@@ -171,7 +222,11 @@ final class JSONTextKitFoldingSpikeTests: XCTestCase {
             get: { state.foldedRanges },
             set: { state.foldedRanges = $0 }
         )
-        let coordinator = JSONCodeEditorView.Coordinator(text: textBinding, foldedRanges: foldedBinding)
+        let coordinator = JSONCodeEditorView.Coordinator(
+            text: textBinding,
+            foldedRanges: foldedBinding,
+            highlightsVisibleRangeOnly: highlightsVisibleRangeOnly
+        )
         let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 500, height: 300))
         let textStorage = NSTextStorage(string: source)
         let layoutManager = JSONFoldingLayoutManager()
