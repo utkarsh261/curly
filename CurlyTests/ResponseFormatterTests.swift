@@ -41,6 +41,21 @@ final class ResponseFormatterTests: XCTestCase {
         XCTAssertEqual(formatted.body.bodyText, "missing")
     }
 
+    func testFormatsJSONServerErrorIntoTreeMode() async {
+        let response = makeResponse(
+            statusCode: 500,
+            headers: [ResponseHeader(name: "Content-Type", value: "application/problem+json")],
+            body: Data("{\"error\":{\"code\":\"internal_error\"}}".utf8),
+            mimeType: "application/problem+json"
+        )
+
+        let formatted = await formatter.format(response)
+
+        XCTAssertEqual(formatted.selectedMode, .tree)
+        XCTAssertEqual(formatted.summary.tone, .failure)
+        XCTAssertNotNil(formatted.body.jsonValue)
+    }
+
     func testFormatsBinaryResponseAsNonPreviewable() async {
         let response = makeResponse(
             statusCode: 500,

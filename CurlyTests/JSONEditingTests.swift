@@ -47,6 +47,147 @@ final class JSONEditingTests: XCTestCase {
         XCTAssertFalse(JSONValidator.validate(invalid).isValid)
     }
 
+    func testValidatorLocatesMissingObjectSeparatorsAtUnexpectedToken() throws {
+        let missingComma = """
+        {
+          "a": 1
+          "b": 2
+        }
+        """
+        let commaDiagnostic = try XCTUnwrap(JSONValidator.validate(missingComma).diagnostic)
+        XCTAssertEqual(commaDiagnostic.line, 3)
+        XCTAssertEqual(commaDiagnostic.column, 3)
+        XCTAssertEqual(commaDiagnostic.message, "Expected ',' or '}' after the object value.")
+
+        let missingColon = """
+        {
+          "a" 1
+        }
+        """
+        let colonDiagnostic = try XCTUnwrap(JSONValidator.validate(missingColon).diagnostic)
+        XCTAssertEqual(colonDiagnostic.line, 2)
+        XCTAssertEqual(colonDiagnostic.column, 7)
+        XCTAssertEqual(colonDiagnostic.message, "Expected ':' after the object key.")
+    }
+
+    func testValidatorLocatesMalformedValuesNumbersAndEscapes() throws {
+        let literal = try XCTUnwrap(JSONValidator.validate(#"{"value": nope}"#).diagnostic)
+        XCTAssertEqual(literal.range, NSRange(location: 10, length: 1))
+        XCTAssertEqual(literal.message, "Invalid JSON literal.")
+
+        let number = try XCTUnwrap(JSONValidator.validate(#"{"value": 01}"#).diagnostic)
+        XCTAssertEqual(number.range, NSRange(location: 11, length: 1))
+        XCTAssertEqual(number.message, "Numbers cannot contain leading zeroes.")
+
+        let escape = try XCTUnwrap(JSONValidator.validate(#"{"value": "\x"}"#).diagnostic)
+        XCTAssertEqual(escape.range, NSRange(location: 12, length: 1))
+        XCTAssertEqual(escape.message, "Invalid string escape sequence.")
+    }
+
+    func testValidatorPointsUnfinishedConstructsAtTheirOpeningToken() throws {
+        let object = try XCTUnwrap(JSONValidator.validate("{\n  \"value\": 1").diagnostic)
+        XCTAssertEqual(object.range, NSRange(location: 0, length: 1))
+        XCTAssertEqual(object.message, "Object is not closed.")
+
+        let array = try XCTUnwrap(JSONValidator.validate("[1, 2").diagnostic)
+        XCTAssertEqual(array.range, NSRange(location: 0, length: 1))
+        XCTAssertEqual(array.message, "Array is not closed.")
+
+        let string = try XCTUnwrap(JSONValidator.validate(#"{"value": "unfinished}"#).diagnostic)
+        XCTAssertEqual(string.range, NSRange(location: 10, length: 1))
+        XCTAssertEqual(string.message, "String is not closed.")
+
+        let comment = try XCTUnwrap(JSONValidator.validate("{\n  /* unfinished\n  \"value\": 1\n}").diagnostic)
+        XCTAssertEqual(comment.range, NSRange(location: 4, length: 2))
+        XCTAssertEqual(comment.line, 2)
+        XCTAssertEqual(comment.column, 3)
+        XCTAssertEqual(comment.message, "Block comment is not closed.")
+    }
+
+    func testValidatorLocatesTrailingCommasAndMismatchedContainers() throws {
+        let object = try XCTUnwrap(JSONValidator.validate(#"{"value": 1,}"#).diagnostic)
+        XCTAssertEqual(object.range, NSRange(location: 11, length: 1))
+        XCTAssertEqual(object.message, "Trailing commas are not allowed.")
+
+        let array = try XCTUnwrap(JSONValidator.validate("[1, 2,]").diagnostic)
+        XCTAssertEqual(array.range, NSRange(location: 5, length: 1))
+
+        let mismatch = try XCTUnwrap(JSONValidator.validate(#"{"value": 1]"#).diagnostic)
+        XCTAssertEqual(mismatch.range, NSRange(location: 11, length: 1))
+        XCTAssertEqual(mismatch.message, "Expected ',' or '}' after the object value.")
+    }
+
+    func testValidatorLocatesUnexpectedContentAfterRootValue() throws {
+        let result = JSONValidator.validate(#"{"ok": true} false"#)
+        let diagnostic = try XCTUnwrap(result.diagnostic)
+
+        XCTAssertEqual(diagnostic.range, NSRange(location: 13, length: 1))
+        XCTAssertEqual(diagnostic.message, "Unexpected content after the top-level JSON value.")
+    }
+
+    func testDiagnosticLocationsUseOriginalCommentedUnicodeSource() throws {
+        let source = """
+
+        {
+          /* 😊 comment */
+          "emoji": "😊",
+          "bad" nope
+        }
+        """
+        let diagnostic = try XCTUnwrap(JSONValidator.validate(source).diagnostic)
+
+        XCTAssertEqual(diagnostic.line, 5)
+        XCTAssertEqual(diagnostic.column, 9)
+        XCTAssertEqual((source as NSString).substring(with: try XCTUnwrap(diagnostic.range)), "n")
+    }
+
+    func testDiagnosticColumnsCountTabsAndEmojiAsSingleVisibleCharacters() throws {
+        let source = "{\r\n\t\"emoji\": \"😊\",\r\n\t\"bad\" nope\r\n}"
+        let diagnostic = try XCTUnwrap(JSONValidator.validate(source).diagnostic)
+
+        XCTAssertEqual(diagnostic.line, 3)
+        XCTAssertEqual(diagnostic.column, 8)
+        XCTAssertEqual(diagnostic.displayMessage, "Line 3, column 8 — Expected ':' after the object key.")
+    }
+
+    func testDiagnosticColumnNormalizesAnOffsetInsideAComposedCharacter() {
+        let diagnostic = JSONDiagnostic.located(
+            message: "Test diagnostic.",
+            text: "😊x",
+            range: NSRange(location: 1, length: 1)
+        )
+
+        XCTAssertEqual(diagnostic.line, 1)
+        XCTAssertEqual(diagnostic.column, 1)
+    }
+
+    func testValidatorPreservesCommentDeletionSemanticsAndAllowsCommentOnlyBodies() throws {
+        XCTAssertTrue(JSONValidator.validate(#"{"value": tr/* join */ue}"#).isValid)
+        XCTAssertTrue(JSONValidator.validate(#"{"value": "/* text, not comment */"}"#).isValid)
+        XCTAssertTrue(JSONValidator.validate("  // comment\n/* another */\n").isValid)
+        XCTAssertEqual(try JSONFormatter.format("  // comment\n/* another */\n"), "  // comment\n/* another */\n")
+        XCTAssertEqual(try JSONFormatter.compact("  // comment\n/* another */\n"), "  // comment\n/* another */\n")
+    }
+
+    func testLocatorFallsBackWithoutLocationPastNestingLimit() throws {
+        let source = String(repeating: "[", count: 257) + "invalid" + String(repeating: "]", count: 257)
+        let diagnostic = try XCTUnwrap(JSONValidator.validate(source).diagnostic)
+
+        XCTAssertNil(diagnostic.range)
+        XCTAssertNil(diagnostic.line)
+        XCTAssertNil(diagnostic.column)
+        XCTAssertEqual(diagnostic.message, "JSON is invalid, but Curly could not determine the error location.")
+    }
+
+    func testLocatorHandlesLargeInvalidBodyWithoutLosingLocation() throws {
+        let leadingWhitespace = String(repeating: " ", count: 1_000_000)
+        let source = leadingWhitespace + #"{"value": nope}"#
+        let diagnostic = try XCTUnwrap(JSONValidator.validate(source).diagnostic)
+
+        XCTAssertEqual(diagnostic.range?.location, leadingWhitespace.utf16.count + 10)
+        XCTAssertEqual(diagnostic.message, "Invalid JSON literal.")
+    }
+
     func testFoldRangesIgnoreBracesInsideStringsAndComments() {
         let text = """
         {
@@ -152,6 +293,29 @@ final class JSONEditingTests: XCTestCase {
         XCTAssertEqual(tokens4.filter { $0.kind == .boolLiteral }.count, 1) // the unquoted true
     }
 
+    func testStreamingLexerMatchesMaterializedTokensAndCanStopEarly() {
+        let text = #"{"url":"https://example.com","items":[true, null, -12.5],/* note */"ok":false}"#
+        let expected = JSONLexer.tokenize(text)
+        var streamed: [JSONToken] = []
+
+        let completed = JSONLexer.forEachToken(in: text) { token in
+            streamed.append(token)
+            return true
+        }
+
+        XCTAssertTrue(completed)
+        XCTAssertEqual(streamed, expected)
+
+        var visited = 0
+        let stoppedEarly = JSONLexer.forEachToken(in: String(repeating: "0,", count: 100_000)) { _ in
+            visited += 1
+            return visited < 3
+        }
+
+        XCTAssertFalse(stoppedEarly)
+        XCTAssertEqual(visited, 3)
+    }
+
     func testConsolidatedAnalysisMatchesDiscreteParsing() {
         let text = """
         {
@@ -170,18 +334,21 @@ final class JSONEditingTests: XCTestCase {
         // 1. Run consolidated analysis
         let analysis = SyntaxAnalysisResult.analyze(text)
         
-        // 2. Run discrete parsing
-        let expectedTokens = JSONLexer.tokenize(text)
+        // 2. Run discrete structural parsing
         let expectedLineMap = JSONLineMap(text: text)
         let expectedFoldRanges = JSONFoldIndex.foldRanges(in: text)
         
-        // 3. Assert exact equality
-        XCTAssertEqual(analysis.tokens, expectedTokens, "Consolidated tokens should perfectly match discrete tokens")
+        // 3. Assert exact equality without retaining source text or lexer tokens.
         XCTAssertEqual(analysis.lineMap, expectedLineMap, "Consolidated line map should perfectly match discrete line map")
         XCTAssertEqual(analysis.foldRanges, expectedFoldRanges, "Consolidated fold ranges should perfectly match discrete fold ranges")
+        XCTAssertEqual(
+            Set(Mirror(reflecting: analysis).children.compactMap(\.label)),
+            Set(["lineMap", "foldRanges"]),
+            "Persistent analysis must remain structural-only so highlighting cannot retain a token per character."
+        )
     }
     
-    func testFoldRangesConsumesPrecalculatedInputs() {
+    func testFoldRangesConsumesPrecalculatedLineMap() {
         let text = """
         {
           "arr": [1, 2, 3],
@@ -191,16 +358,31 @@ final class JSONEditingTests: XCTestCase {
         }
         """
         
-        let tokens = JSONLexer.tokenize(text)
         let lineMap = JSONLineMap(text: text)
         
-        // Pass precalculated inputs
-        let foldRangesWithInputs = JSONFoldIndex.foldRanges(in: text, tokens: tokens, lineMap: lineMap)
+        // Pass the shared line map while tokens continue to stream.
+        let foldRangesWithInputs = JSONFoldIndex.foldRanges(in: text, lineMap: lineMap)
         
         // Pass no precalculated inputs
         let foldRangesWithoutInputs = JSONFoldIndex.foldRanges(in: text)
         
         XCTAssertEqual(foldRangesWithInputs, foldRangesWithoutInputs, "Passing precalculated inputs should produce identical results")
+    }
+
+    func testFormatterInvalidErrorPreservesLocatedValidationResult() throws {
+        let source = """
+        {
+          "bad" nope
+        }
+        """
+
+        XCTAssertThrowsError(try JSONFormatter.format(source)) { error in
+            guard let formattingError = error as? JSONFormattingError else {
+                return XCTFail("Expected JSONFormattingError, got \(error)")
+            }
+            XCTAssertEqual(formattingError.validationResult.diagnostic?.line, 2)
+            XCTAssertEqual(formattingError.validationResult.diagnostic?.column, 9)
+        }
     }
 
     func testLineMapLineNumberLookup() {
@@ -217,4 +399,3 @@ final class JSONEditingTests: XCTestCase {
         XCTAssertEqual(lineMap.lineNumber(at: 18), 3) // 'l' of line3
     }
 }
-

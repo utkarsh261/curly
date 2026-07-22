@@ -248,10 +248,12 @@ private struct UITestEchoRequestExecutor: RequestExecuting {
             .filter(\.isEnabled)
             .map { "\($0.name)=\($0.value)" }
             .joined(separator: "\n")
+        let requestBody = request.body.textValue
         let bodyText = [
             "method=\(request.method.rawValue)",
             "url=\(request.urlString)",
-            headerLines
+            headerLines,
+            requestBody.isEmpty ? "" : "body=\(requestBody)"
         ]
         .filter { !$0.isEmpty }
         .joined(separator: "\n")

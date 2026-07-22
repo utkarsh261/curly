@@ -42,6 +42,26 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(request.body, .text("some raw text body"))
     }
 
+    func testPreservesMultilineInvalidJSONBodyForEditorDiagnostics() throws {
+        let invalidBody = """
+        {
+          "good": true,
+          "bad" nope
+        }
+        """
+        let request = try importer.parse(
+            """
+            curl -X POST https://api.example.com/users \\
+              -H "Content-Type: application/json" \\
+              -d '\(invalidBody)'
+            """
+        ).request
+
+        XCTAssertEqual(request.urlString, "https://api.example.com/users")
+        XCTAssertEqual(request.body, .text(invalidBody))
+        XCTAssertEqual(JSONValidator.validate(request.body.textValue).diagnostic?.line, 3)
+    }
+
     func testInfersPostWhenBodyExistsWithoutExplicitMethod() throws {
         let request = try importer.parse("curl https://example.com --data '{\"name\":\"utk\"}'").request
 

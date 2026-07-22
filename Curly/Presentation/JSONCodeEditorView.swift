@@ -6,10 +6,16 @@ struct JSONCodeEditorView: NSViewRepresentable {
     @Binding var foldedRanges: [NSRange]
     var isEditable: Bool
     var accessibilityIdentifier: String
+    var diagnostic: JSONDiagnostic?
+    var revealDiagnosticGeneration: Int
     @Environment(\.colorScheme) var colorScheme
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, foldedRanges: $foldedRanges)
+        Coordinator(
+            text: $text,
+            foldedRanges: $foldedRanges,
+            highlightsVisibleRangeOnly: !isEditable
+        )
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -33,7 +39,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
         textStorage.addLayoutManager(layoutManager)
         layoutManager.addTextContainer(textContainer)
 
-        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        let textView = JSONCodeTextView(frame: .zero, textContainer: textContainer)
         textView.autoresizingMask = [.width]
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -45,7 +51,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
         textView.drawsBackground = true
         textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
         textView.isRichText = false
-        textView.allowsUndo = true
+        textView.allowsUndo = isEditable
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -64,15 +70,18 @@ struct JSONCodeEditorView: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.layoutManager = layoutManager
         context.coordinator.rulerView = rulerView
+        context.coordinator.observeViewport(of: scrollView)
         let initialAnalysis = SyntaxAnalysisResult.analyze(text)
         context.coordinator.latestAnalysis = initialAnalysis
         context.coordinator.applyHighlighting(to: textView, using: initialAnalysis)
+        context.coordinator.applyDiagnostic(diagnostic, to: textView)
+        context.coordinator.lastRevealDiagnosticGeneration = revealDiagnosticGeneration
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else {
+        guard let textView = scrollView.documentView as? JSONCodeTextView else {
             return
         }
 
@@ -81,9 +90,15 @@ struct JSONCodeEditorView: NSViewRepresentable {
 
         context.coordinator.text = $text
         context.coordinator.foldedRanges = $foldedRanges
+        let changedHighlightingMode = context.coordinator.highlightsVisibleRangeOnly == isEditable
+        context.coordinator.highlightsVisibleRangeOnly = !isEditable
+        if changedHighlightingMode {
+            context.coordinator.highlightedRange = nil
+        }
 
         if textView.string != text {
             context.coordinator.layoutManager?.foldedRanges = []
+            context.coordinator.highlightedRange = nil
             let selectedRanges = context.coordinator.clampedSelectedRanges(for: textView, replacementLength: (text as NSString).length)
             context.coordinator.isProgrammaticUpdate = true
             textView.string = text
@@ -96,27 +111,70 @@ struct JSONCodeEditorView: NSViewRepresentable {
         }
 
         textView.isEditable = isEditable
+        textView.allowsUndo = isEditable
         context.coordinator.layoutManager?.foldedRanges = context.coordinator.validFoldedRanges(in: textView.string)
-        context.coordinator.rulerView?.needsDisplay = true
+        context.coordinator.applyDiagnostic(diagnostic, to: textView)
+        if context.coordinator.lastRevealDiagnosticGeneration != revealDiagnosticGeneration {
+            context.coordinator.lastRevealDiagnosticGeneration = revealDiagnosticGeneration
+            context.coordinator.revealDiagnostic(diagnostic, in: textView)
+        }
     }
 
+    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var text: Binding<String>
         var foldedRanges: Binding<[NSRange]>
-        weak var textView: NSTextView?
+        weak var textView: JSONCodeTextView?
         weak var layoutManager: JSONFoldingLayoutManager?
         weak var rulerView: JSONLineNumberRulerView?
         private var isApplyingHighlighting = false
         var isProgrammaticUpdate = false
         var latestAnalysis: SyntaxAnalysisResult?
+        var highlightsVisibleRangeOnly: Bool
+        var highlightedRange: NSRange?
+        var lastRevealDiagnosticGeneration = 0
+        nonisolated(unsafe) private var viewportObserver: NSObjectProtocol?
 
-        init(text: Binding<String>, foldedRanges: Binding<[NSRange]>) {
+        init(
+            text: Binding<String>,
+            foldedRanges: Binding<[NSRange]>,
+            highlightsVisibleRangeOnly: Bool = false
+        ) {
             self.text = text
             self.foldedRanges = foldedRanges
+            self.highlightsVisibleRangeOnly = highlightsVisibleRangeOnly
+        }
+
+        deinit {
+            if let viewportObserver {
+                NotificationCenter.default.removeObserver(viewportObserver)
+            }
+        }
+
+        @MainActor
+        func observeViewport(of scrollView: NSScrollView) {
+            if let viewportObserver {
+                NotificationCenter.default.removeObserver(viewportObserver)
+            }
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            viewportObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard
+                        let self,
+                        self.highlightsVisibleRangeOnly,
+                        let textView = self.textView
+                    else { return }
+                    self.applyHighlighting(to: textView, using: self.latestAnalysis)
+                }
+            }
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else {
+            guard let textView = notification.object as? JSONCodeTextView else {
                 return
             }
 
@@ -127,7 +185,13 @@ struct JSONCodeEditorView: NSViewRepresentable {
             let textVal = textView.string
             let analysis = SyntaxAnalysisResult.analyze(textVal)
             latestAnalysis = analysis
+            highlightedRange = highlightedRange.flatMap { range in
+                let length = (textVal as NSString).length
+                guard range.location <= length else { return nil }
+                return NSRange(location: range.location, length: min(range.length, length - range.location))
+            }
 
+            applyDiagnostic(nil, to: textView)
             rulerView?.invalidateFoldCache()
             text.wrappedValue = textVal
             foldedRanges.wrappedValue = validFoldedRanges(in: textVal)
@@ -153,7 +217,7 @@ struct JSONCodeEditorView: NSViewRepresentable {
             }
 
             layoutManager?.foldedRanges = validFoldedRanges(in: textView.string)
-            rulerView?.needsDisplay = true
+            applyDiagnostic(currentDiagnostic, to: textView)
         }
 
         func validFoldedRanges(in string: String) -> [NSRange] {
@@ -161,6 +225,58 @@ struct JSONCodeEditorView: NSViewRepresentable {
             return foldedRanges.wrappedValue.filter { range in
                 range.location >= 0 && range.length > 0 && NSMaxRange(range) <= length
             }
+        }
+
+        private var currentDiagnostic: JSONDiagnostic?
+
+        @MainActor
+        func applyDiagnostic(_ diagnostic: JSONDiagnostic?, to textView: JSONCodeTextView) {
+            currentDiagnostic = diagnostic
+            guard
+                let diagnostic,
+                let range = diagnostic.range,
+                range.location <= (textView.string as NSString).length
+            else {
+                textView.diagnosticLineRange = nil
+                rulerView?.setDiagnostic(actualLineNumber: nil, markerLineNumber: nil)
+                return
+            }
+
+            let analysis = latestAnalysis ?? SyntaxAnalysisResult.analyze(textView.string)
+            latestAnalysis = analysis
+            let lineMap = analysis.lineMap
+            let actualLine = lineMap.lineNumber(at: range.location)
+            let containingFolds = validFoldedRanges(in: textView.string).filter { foldRange in
+                foldRange.location < range.location && NSMaxRange(foldRange) > range.location
+            }
+
+            if let visibleFold = containingFolds.min(by: { $0.location < $1.location }) {
+                let markerLine = lineMap.lineNumber(at: visibleFold.location)
+                textView.diagnosticLineRange = nil
+                rulerView?.setDiagnostic(actualLineNumber: nil, markerLineNumber: markerLine)
+            } else {
+                textView.diagnosticLineRange = lineMap.lineRange(forZeroBasedLine: actualLine, in: textView.string)
+                rulerView?.setDiagnostic(actualLineNumber: actualLine, markerLineNumber: actualLine)
+            }
+        }
+
+        @MainActor
+        func revealDiagnostic(_ diagnostic: JSONDiagnostic?, in textView: JSONCodeTextView) {
+            guard let diagnostic, let range = diagnostic.range else { return }
+            let textLength = (textView.string as NSString).length
+            let location = min(max(0, range.location), textLength)
+            foldedRanges.wrappedValue.removeAll { foldRange in
+                foldRange.location < location && NSMaxRange(foldRange) > location
+            }
+            layoutManager?.foldedRanges = validFoldedRanges(in: textView.string)
+            applyDiagnostic(diagnostic, to: textView)
+
+            let lineMap = latestAnalysis?.lineMap ?? JSONLineMap(text: textView.string)
+            let line = lineMap.lineNumber(at: location)
+            let lineRange = lineMap.lineRange(forZeroBasedLine: line, in: textView.string)
+            textView.setSelectedRange(NSRange(location: location, length: 0))
+            textView.window?.makeFirstResponder(textView)
+            textView.scrollRangeToVisible(lineRange)
         }
 
         @MainActor
@@ -177,7 +293,11 @@ struct JSONCodeEditorView: NSViewRepresentable {
         }
 
         @MainActor
-        func applyHighlighting(to textView: NSTextView, using analysis: SyntaxAnalysisResult? = nil) {
+        func applyHighlighting(
+            to textView: NSTextView,
+            using analysis: SyntaxAnalysisResult? = nil,
+            visibleCharacterRange: NSRange? = nil
+        ) {
             guard !isApplyingHighlighting else {
                 return
             }
@@ -188,21 +308,62 @@ struct JSONCodeEditorView: NSViewRepresentable {
             autoreleasepool {
                 let source = textView.string as NSString
                 let fullRange = NSRange(location: 0, length: source.length)
+                let targetRange = highlightingRange(
+                    in: textView,
+                    source: source,
+                    requestedVisibleRange: visibleCharacterRange
+                )
                 let selectedRanges = textView.selectedRanges
 
                 let storage = textView.textStorage
                 storage?.beginEditing()
-                storage?.setAttributes(baseAttributes, range: fullRange)
+                if highlightsVisibleRangeOnly {
+                    let previousRange = highlightedRange.flatMap { range -> NSRange? in
+                        guard range.location <= source.length else { return nil }
+                        return NSRange(
+                            location: range.location,
+                            length: min(range.length, source.length - range.location)
+                        )
+                    }
+                    if let previousRange {
+                        if previousRange.length > 0 {
+                            storage?.setAttributes(baseAttributes, range: previousRange)
+                        }
+                        if targetRange != previousRange, targetRange.length > 0 {
+                            storage?.setAttributes(baseAttributes, range: targetRange)
+                        }
+                    } else if fullRange.length > 0 {
+                        storage?.setAttributes(baseAttributes, range: fullRange)
+                    }
+                } else if fullRange.length > 0 {
+                    storage?.setAttributes(baseAttributes, range: fullRange)
+                }
 
                 let resolvedAnalysis = analysis ?? latestAnalysis ?? SyntaxAnalysisResult.analyze(textView.string)
                 latestAnalysis = resolvedAnalysis
 
-                for token in resolvedAnalysis.tokens {
-                    guard token.range.location != NSNotFound, NSMaxRange(token.range) <= source.length else {
-                        continue
-                    }
-                    storage?.addAttributes(attributes(for: token.kind), range: token.range)
+                let lexicalText: String
+                let rangeOffset: Int
+                if highlightsVisibleRangeOnly {
+                    lexicalText = source.substring(with: targetRange)
+                    rangeOffset = targetRange.location
+                } else {
+                    lexicalText = textView.string
+                    rangeOffset = 0
                 }
+
+                JSONLexer.forEachToken(in: lexicalText) { token in
+                    let absoluteRange = NSRange(
+                        location: token.range.location + rangeOffset,
+                        length: token.range.length
+                    )
+                    guard absoluteRange.location != NSNotFound, NSMaxRange(absoluteRange) <= source.length else {
+                        return true
+                    }
+                    storage?.addAttributes(attributes(for: token.kind), range: absoluteRange)
+                    return true
+                }
+                highlightedRange = highlightsVisibleRangeOnly ? targetRange : fullRange
 
                 storage?.endEditing()
                 let currentLength = (textView.string as NSString).length
@@ -213,6 +374,41 @@ struct JSONCodeEditorView: NSViewRepresentable {
                 }
                 textView.selectedRanges = safeRanges.isEmpty ? [NSValue(range: NSRange(location: 0, length: 0))] : safeRanges
             }
+        }
+
+        @MainActor
+        private func highlightingRange(
+            in textView: NSTextView,
+            source: NSString,
+            requestedVisibleRange: NSRange?
+        ) -> NSRange {
+            let fullRange = NSRange(location: 0, length: source.length)
+            guard highlightsVisibleRangeOnly, source.length > 0 else {
+                return fullRange
+            }
+
+            let candidate = requestedVisibleRange ?? visibleCharacterRange(in: textView, sourceLength: source.length)
+            let location = min(max(0, candidate.location), source.length)
+            let length = min(max(0, candidate.length), source.length - location)
+            let safeRange = NSRange(location: location, length: length)
+            return source.lineRange(for: safeRange)
+        }
+
+        @MainActor
+        private func visibleCharacterRange(in textView: NSTextView, sourceLength: Int) -> NSRange {
+            guard
+                let layoutManager = textView.layoutManager,
+                let textContainer = textView.textContainer,
+                !textView.visibleRect.isEmpty
+            else {
+                return NSRange(location: 0, length: min(sourceLength, 16_384))
+            }
+
+            let glyphRange = layoutManager.glyphRange(forBoundingRect: textView.visibleRect, in: textContainer)
+            guard glyphRange.length > 0 else {
+                return NSRange(location: 0, length: min(sourceLength, 16_384))
+            }
+            return layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
         }
 
         private var baseAttributes: [NSAttributedString.Key: Any] {
@@ -252,8 +448,16 @@ struct JSONEditorPanel: View {
     @Binding var foldedRanges: [NSRange]
     var showsFoldingControls: Bool = true
 
-    @State private var validationResult = JSONValidationResult(isValid: true, errorMessage: nil)
+    @State private var validationResult = JSONValidationResult.valid
+    @State private var validatedText: String?
     @State private var formattingError: String?
+    @State private var revealDiagnosticGeneration = 0
+
+    private enum TransformResult: Sendable {
+        case transformed(String)
+        case invalid(JSONValidationResult)
+        case failed(String)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -305,7 +509,9 @@ struct JSONEditorPanel: View {
                 text: $text,
                 foldedRanges: $foldedRanges,
                 isEditable: isEditable,
-                accessibilityIdentifier: accessibilityIdentifier
+                accessibilityIdentifier: accessibilityIdentifier,
+                diagnostic: currentDiagnostic,
+                revealDiagnosticGeneration: revealDiagnosticGeneration
             )
             .frame(minHeight: minHeight, maxHeight: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -314,28 +520,36 @@ struct JSONEditorPanel: View {
                     .strokeBorder(borderColor, lineWidth: 1)
             }
 
-            if let formattingError {
-                Text(formattingError)
-                    .font(.caption)
-                    .foregroundStyle(Color.accent)
+            if showsValidation {
+                diagnosticRow
             }
         }
         .onChange(of: text) { _, _ in
             foldedRanges = []
             formattingError = nil
+            validatedText = nil
         }
         .task(id: text) {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                self.validationResult = JSONValidationResult(isValid: true, errorMessage: nil)
+            guard showsValidation else { return }
+            let source = text
+            if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                validationResult = .valid
+                validatedText = source
                 return
             }
             do {
                 try await Task.sleep(nanoseconds: 300_000_000)
-                let result = await Task.detached(priority: .userInitiated) {
-                    return JSONValidator.validate(trimmed)
-                }.value
-                self.validationResult = result
+                let validationTask = Task.detached(priority: .userInitiated) {
+                    JSONValidator.validate(source)
+                }
+                let result = await withTaskCancellationHandler {
+                    await validationTask.value
+                } onCancel: {
+                    validationTask.cancel()
+                }
+                guard !Task.isCancelled, text == source else { return }
+                validationResult = result
+                validatedText = source
             } catch {
                 // Task was cancelled
             }
@@ -346,7 +560,64 @@ struct JSONEditorPanel: View {
         Label(validationResult.isValid ? "Valid JSON" : "Invalid JSON", systemImage: validationResult.isValid ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
             .font(.caption.weight(.semibold))
             .foregroundStyle(validationResult.isValid ? Color.green : Color.orange)
-            .help(validationResult.errorMessage ?? "JSON is valid")
+            .help(badgeHelp)
+            .accessibilityIdentifier("\(accessibilityIdentifier)-validation-badge")
+    }
+
+    @ViewBuilder
+    private var diagnosticRow: some View {
+        Group {
+            if let diagnostic = currentDiagnostic {
+                if diagnostic.range != nil {
+                    Button {
+                        revealDiagnosticGeneration &+= 1
+                    } label: {
+                        diagnosticLabel(diagnostic.displayMessage)
+                    }
+                    .buttonStyle(.plain)
+                    .help(diagnostic.displayMessage)
+                    .accessibilityLabel(diagnostic.displayMessage)
+                    .accessibilityHint("Show the JSON error in the request body editor")
+                    .accessibilityIdentifier("\(accessibilityIdentifier)-diagnostic")
+                } else {
+                    diagnosticLabel(diagnostic.displayMessage)
+                        .help(diagnostic.displayMessage)
+                        .accessibilityLabel(diagnostic.displayMessage)
+                        .accessibilityIdentifier("\(accessibilityIdentifier)-diagnostic")
+                }
+            } else if let formattingError {
+                diagnosticLabel(formattingError)
+                    .help(formattingError)
+                    .accessibilityLabel(formattingError)
+                    .accessibilityIdentifier("\(accessibilityIdentifier)-diagnostic")
+            } else {
+                Color.clear
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(height: 16, alignment: .leading)
+    }
+
+    private func diagnosticLabel(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle.fill")
+            .font(.caption)
+            .foregroundStyle(Color.orange)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+
+    private var currentDiagnostic: JSONDiagnostic? {
+        guard validatedText == text else { return nil }
+        return validationResult.diagnostic
+    }
+
+    private var badgeHelp: String {
+        guard validatedText == text else {
+            return validationResult.isValid ? "JSON is valid" : "JSON is invalid"
+        }
+        return validationResult.errorMessage ?? "JSON is valid"
     }
 
     private var borderColor: Color {
@@ -364,31 +635,47 @@ struct JSONEditorPanel: View {
     }
 
     private func format() {
-        let currentText = text
-        Task {
-            do {
-                let formatted = try await Task.detached(priority: .userInitiated) {
-                    try JSONFormatter.format(currentText)
-                }.value
-                self.text = formatted
-                self.formattingError = nil
-            } catch {
-                self.formattingError = error.localizedDescription
-            }
+        transform { text in
+            try JSONFormatter.format(text)
         }
     }
 
     private func compact() {
+        transform(using: JSONFormatter.compact)
+    }
+
+    private func transform(using operation: @escaping @Sendable (String) throws -> String) {
         let currentText = text
         Task {
-            do {
-                let compacted = try await Task.detached(priority: .userInitiated) {
-                    try JSONFormatter.compact(currentText)
-                }.value
-                self.text = compacted
-                self.formattingError = nil
-            } catch {
-                self.formattingError = error.localizedDescription
+            let transformTask = Task.detached(priority: .userInitiated) { () -> TransformResult in
+                do {
+                    return .transformed(try operation(currentText))
+                } catch let error as JSONFormattingError {
+                    return .invalid(error.validationResult)
+                } catch {
+                    return .failed(error.localizedDescription)
+                }
+            }
+            let result = await withTaskCancellationHandler {
+                await transformTask.value
+            } onCancel: {
+                transformTask.cancel()
+            }
+            guard !Task.isCancelled, text == currentText else { return }
+
+            switch result {
+            case .transformed(let transformed):
+                text = transformed
+                formattingError = nil
+            case .invalid(let validation):
+                validationResult = validation
+                validatedText = currentText
+                formattingError = nil
+                if validation.diagnostic?.range != nil {
+                    revealDiagnosticGeneration &+= 1
+                }
+            case .failed(let message):
+                formattingError = message
             }
         }
     }
