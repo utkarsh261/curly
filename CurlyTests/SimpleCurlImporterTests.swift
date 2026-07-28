@@ -90,6 +90,17 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(request.headers.map(\.value), ["1", "2"])
     }
 
+    func testPreservesCurlyVariableTemplatesInImportedURLAndHeaderValues() throws {
+        let request = try importer.parse(
+            "curl 'https://{{host}}/users' -H 'Authorization: {{authorization}}'"
+        ).request
+
+        XCTAssertEqual(request.urlString, "https://{{host}}/users")
+        XCTAssertEqual(request.headers.map(\.name), ["Authorization"])
+        XCTAssertEqual(request.headers.map(\.value), ["{{authorization}}"])
+        XCTAssertEqual(request.headers.map(\.isEnabled), [true])
+    }
+
     func testImportsMultipartFormAsUsableRequestWithWarning() throws {
         let result = try importer.parse("curl https://example.com -F 'file=@demo.txt'")
 

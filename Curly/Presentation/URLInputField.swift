@@ -16,16 +16,49 @@ enum VariableTokenPalette {
     }
 }
 
+enum VariableTemplateFieldAccessibility {
+    static func description(text: String, variables: [Variable]) -> String? {
+        let tokens = VariableTemplateParser.parse(text, variables: variables).compactMap { segment -> VariableToken? in
+            guard case .token(let token) = segment else { return nil }
+            return token
+        }
+        guard !tokens.isEmpty else { return nil }
+
+        return tokens.map { token in
+            switch token.status {
+            case .resolved:
+                let name = token.name ?? token.rawText
+                return "Recognized variable \(name). Resolves to \(token.resolvedValue ?? "")."
+            case .missing:
+                if let diagnostic = token.diagnostic {
+                    return "Unresolved variable \(token.name ?? token.rawText). \(diagnostic)."
+                }
+                return "Missing variable \(token.name ?? token.rawText)."
+            case .invalid:
+                if let diagnostic = token.diagnostic {
+                    return "Invalid variable \(token.rawText). \(diagnostic)."
+                }
+                return "Invalid variable \(token.rawText)."
+            }
+        }
+        .joined(separator: " ")
+    }
+}
+
 struct URLInputField: NSViewRepresentable {
     @Binding var text: String
     let variables: [Variable]
     let placeholder: String
-    var isFocused: FocusState<Bool>.Binding
+    var isFocused: Binding<Bool>
     let focusRequest: Int
     let onPaste: (String) -> Bool
+    var accessibilityIdentifier = "url-input-field"
+    var accessibilityLabel = "Request URL"
+    var enablesRequestImport = true
+    var onCommit: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, isFocused: isFocused, onPaste: onPaste)
+        Coordinator(text: $text, isFocused: isFocused, onPaste: onPaste, onCommit: onCommit)
     }
 
     func makeNSView(context: Context) -> PasteAwareTextField {
@@ -33,6 +66,15 @@ struct URLInputField: NSViewRepresentable {
         textField.cell = URLTokenTextFieldCell(textCell: "")
         textField.cell?.isScrollable = true
         textField.delegate = context.coordinator
+        textField.onWillFocus = { [weak coordinator = context.coordinator] in
+            coordinator?.isFocused.wrappedValue = true
+        }
+        textField.onCommit = { [weak coordinator = context.coordinator] in
+            coordinator?.onCommit()
+        }
+        textField.onEndFocus = { [weak coordinator = context.coordinator] in
+            coordinator?.isFocused.wrappedValue = false
+        }
         textField.variables = variables
         context.coordinator.installTextObserverIfNeeded()
         textField.placeholderString = placeholder
@@ -45,10 +87,13 @@ struct URLInputField: NSViewRepresentable {
         textField.focusRingType = .none
         textField.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         textField.lineBreakMode = .byTruncatingMiddle
-        textField.identifier = NSUserInterfaceItemIdentifier("url-input-field")
+        textField.baseAccessibilityLabel = accessibilityLabel
+        textField.enablesRequestImport = enablesRequestImport
+        textField.identifier = NSUserInterfaceItemIdentifier(accessibilityIdentifier)
         textField.setAccessibilityElement(true)
-        textField.setAccessibilityIdentifier("url-input-field")
+        textField.setAccessibilityIdentifier(accessibilityIdentifier)
         textField.setAccessibilityRole(.textField)
+        textField.refreshVariableAccessibility()
         return textField
     }
 
@@ -56,8 +101,22 @@ struct URLInputField: NSViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.isFocused = isFocused
         context.coordinator.onPaste = onPaste
+        context.coordinator.onCommit = onCommit
+        textField.onWillFocus = { [weak coordinator = context.coordinator] in
+            coordinator?.isFocused.wrappedValue = true
+        }
+        textField.onCommit = { [weak coordinator = context.coordinator] in
+            coordinator?.onCommit()
+        }
+        textField.onEndFocus = { [weak coordinator = context.coordinator] in
+            coordinator?.isFocused.wrappedValue = false
+        }
         textField.variables = variables
         textField.placeholderString = placeholder
+        textField.baseAccessibilityLabel = accessibilityLabel
+        textField.enablesRequestImport = enablesRequestImport
+        textField.identifier = NSUserInterfaceItemIdentifier(accessibilityIdentifier)
+        textField.setAccessibilityIdentifier(accessibilityIdentifier)
 
         if let editor = textField.currentEditor() as? NSTextView {
             if editor.string != text {
@@ -72,6 +131,7 @@ struct URLInputField: NSViewRepresentable {
         } else {
             textField.needsDisplay = true
         }
+        textField.refreshVariableAccessibility()
 
         let shouldFocus = isFocused.wrappedValue || context.coordinator.consumeFocusRequest(focusRequest)
         if shouldFocus {
@@ -89,8 +149,9 @@ struct URLInputField: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
         var text: Binding<String>
-        var isFocused: FocusState<Bool>.Binding
+        var isFocused: Binding<Bool>
         var onPaste: (String) -> Bool
+        var onCommit: () -> Void
         private var lastSelectedRange = NSRange(location: 0, length: 0)
         private var isAdjustingSelection = false
         private var pendingCurlParseWorkItem: DispatchWorkItem?
@@ -101,12 +162,14 @@ struct URLInputField: NSViewRepresentable {
 
         init(
             text: Binding<String>,
-            isFocused: FocusState<Bool>.Binding,
-            onPaste: @escaping (String) -> Bool
+            isFocused: Binding<Bool>,
+            onPaste: @escaping (String) -> Bool,
+            onCommit: @escaping () -> Void
         ) {
             self.text = text
             self.isFocused = isFocused
             self.onPaste = onPaste
+            self.onCommit = onCommit
         }
 
         deinit {
@@ -197,6 +260,7 @@ struct URLInputField: NSViewRepresentable {
                 editor.applyURLTokenAttributes(variables: textField.variables)
                 snapSelectionIfNeeded(in: editor)
             }
+            textField.refreshVariableAccessibility()
             scheduleCurlImportIfNeeded(from: currentText, textField: textField)
         }
 
@@ -213,6 +277,23 @@ struct URLInputField: NSViewRepresentable {
             case #selector(NSText.selectAll(_:)):
                 textView.setSelectedRange(NSRange(location: 0, length: (textView.string as NSString).length))
                 return true
+            case #selector(NSText.insertTab(_:)):
+                guard let activeTextField else { return false }
+                onCommit()
+                isFocused.wrappedValue = false
+                activeTextField.window?.selectNextKeyView(activeTextField)
+                return true
+            case #selector(NSText.insertBacktab(_:)):
+                guard let activeTextField else { return false }
+                onCommit()
+                isFocused.wrappedValue = false
+                activeTextField.window?.selectPreviousKeyView(activeTextField)
+                return true
+            case #selector(NSText.insertNewline(_:)):
+                onCommit()
+                isFocused.wrappedValue = false
+                activeTextField?.window?.makeFirstResponder(nil)
+                return true
             case #selector(NSText.paste(_:)):
                 guard let pastedText = NSPasteboard.general.string(forType: .string) else {
                     return false
@@ -228,7 +309,8 @@ struct URLInputField: NSViewRepresentable {
             shouldChangeTextIn affectedCharRange: NSRange,
             replacementString: String?
         ) -> Bool {
-            if shouldHandleBulkCurlReplacement(
+            if activeTextField?.enablesRequestImport == true,
+               shouldHandleBulkCurlReplacement(
                 replacementString: replacementString,
                 affectedCharRange: affectedCharRange,
                 in: textView
@@ -236,7 +318,8 @@ struct URLInputField: NSViewRepresentable {
                 return false
             }
 
-            if shouldHandleCompleteURLReplacement(
+            if activeTextField?.enablesRequestImport == true,
+               shouldHandleCompleteURLReplacement(
                 replacementString: replacementString,
                 affectedCharRange: affectedCharRange,
                 in: textView
@@ -382,7 +465,7 @@ struct URLInputField: NSViewRepresentable {
 
         private func scheduleCurlImportIfNeeded(from candidate: String, textField: PasteAwareTextField) {
             pendingCurlParseWorkItem?.cancel()
-            guard Self.looksLikeCompleteCurlCommand(candidate) else {
+            guard textField.enablesRequestImport, Self.looksLikeCompleteCurlCommand(candidate) else {
                 return
             }
 
@@ -553,6 +636,15 @@ enum URLTokenEditingPolicy {
 }
 
 final class PasteAwareTextField: NSTextField {
+    var onWillFocus: (() -> Void)?
+    var onCommit: (() -> Void)?
+    var onEndFocus: (() -> Void)?
+    var baseAccessibilityLabel = "Variable template field" {
+        didSet {
+            refreshVariableAccessibility()
+        }
+    }
+    var enablesRequestImport = true
     var variables: [Variable] = [] {
         didSet {
             guard oldValue != variables else { return }
@@ -560,7 +652,15 @@ final class PasteAwareTextField: NSTextField {
                 editor.applyURLTokenAttributes(variables: variables)
             }
             needsDisplay = true
+            refreshVariableAccessibility()
         }
+    }
+
+    func refreshVariableAccessibility() {
+        let text = (currentEditor() as? NSTextView)?.string ?? stringValue
+        let status = VariableTemplateFieldAccessibility.description(text: text, variables: variables)
+        setAccessibilityLabel([baseAccessibilityLabel, status].compactMap { $0 }.joined(separator: ". "))
+        setAccessibilityHelp(status)
     }
 
     override var acceptsFirstResponder: Bool {
@@ -581,6 +681,7 @@ final class PasteAwareTextField: NSTextField {
     }
 
     override func mouseDown(with event: NSEvent) {
+        onWillFocus?()
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
         beginEditingIfNeeded(selectAll: false)
@@ -602,6 +703,7 @@ final class PasteAwareTextField: NSTextField {
     }
 
     override func accessibilityPerformPress() -> Bool {
+        onWillFocus?()
         beginEditingIfNeeded(selectAll: true)
         return true
     }
@@ -610,6 +712,7 @@ final class PasteAwareTextField: NSTextField {
         guard let window else {
             return
         }
+        onWillFocus?()
         let previousSelection = (currentEditor() as? NSTextView)?.selectedRange()
         if currentEditor() == nil || window.firstResponder !== currentEditor() {
             selectText(nil)
@@ -640,6 +743,23 @@ final class PasteAwareTextField: NSTextField {
         editor.insertionPointColor = .labelColor
         editor.backgroundColor = surfaceRaisedNS
         editor.drawsBackground = true
+        if let editor = editor as? URLTokenFieldEditor {
+            editor.onCommitAndMove = { [weak self] movesBackward in
+                guard let self else { return }
+                onCommit?()
+                onEndFocus?()
+                if movesBackward {
+                    window?.selectPreviousKeyView(self)
+                } else {
+                    window?.selectNextKeyView(self)
+                }
+            }
+            editor.onCommitAndEndEditing = { [weak self] in
+                self?.onCommit?()
+                self?.onEndFocus?()
+                self?.window?.makeFirstResponder(nil)
+            }
+        }
         editor.applyURLTokenAttributes(variables: variables)
     }
 
@@ -733,6 +853,9 @@ private final class URLTokenTextFieldCell: NSTextFieldCell {
 }
 
 final class URLTokenFieldEditor: NSTextView {
+    var onCommitAndMove: ((Bool) -> Void)?
+    var onCommitAndEndEditing: (() -> Void)?
+
     override func scrollWheel(with event: NSEvent) {
         scrollHorizontally(
             deltaX: event.scrollingDeltaX,
@@ -753,6 +876,14 @@ final class URLTokenFieldEditor: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if event.keyCode == 48 {
+            onCommitAndMove?(modifiers.contains(.shift))
+            return
+        }
+        if (event.keyCode == 36 || event.keyCode == 76), !modifiers.contains(.command) {
+            onCommitAndEndEditing?()
+            return
+        }
         if modifiers == .command,
            event.charactersIgnoringModifiers?.lowercased() == "a" {
             selectAll(nil)

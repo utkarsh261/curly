@@ -83,6 +83,101 @@ final class PostResponseScriptsUITests: XCTestCase {
         }
     }
 
+    func testRealPostScriptUpdatesLeafUsedByNestedHeaderOnNextRun() {
+        let app = launchApp()
+        defer { app.terminate() }
+
+        openVariables(in: app)
+        createVariable(name: "token", value: "before", in: app)
+        createVariable(name: "authorization", value: "Bearer {{token}}", in: app)
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText(
+            """
+            curl -X POST http://127.0.0.1:9999/post \
+              -H "Content-Type: application/json" \
+              -H "Authorization: {{authorization}}" \
+              -d '{"nextToken":"after"}'
+            """,
+            in: urlField
+        )
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            urlField.value as? String == "http://127.0.0.1:9999/post"
+        })
+
+        revealPostResponseScript(in: app)
+        configureScript(
+            """
+            const body = curly.response.json();
+            curly.variables.global.set("token", body.json.nextToken);
+            """,
+            in: app
+        )
+        triggerRun(app)
+
+        let status = app.descendants(matching: .any)["post-response-script-status"].firstMatch
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(timeout: 5) { self.text(of: status).contains("Passed") })
+        let responseEditor = app.textViews["response-json-pretty-text-view"].firstMatch
+        XCTAssertTrue(responseEditor.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.text(of: responseEditor).contains("Bearer before")
+        })
+
+        openVariables(in: app)
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "Bearer {{token}}"))
+                .firstMatch.waitForExistence(timeout: 3)
+        )
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "after"))
+                .firstMatch.waitForExistence(timeout: 3)
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        triggerRun(app)
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            self.text(of: responseEditor).contains("Bearer after")
+        })
+        XCTAssertTrue(waitUntil(timeout: 5) { self.text(of: status).contains("Passed") })
+    }
+
+    func testOpenVariableEditorAdoptsPostScriptWriteWithoutRestoringStaleValue() {
+        let app = launchApp()
+        defer { app.terminate() }
+
+        openVariables(in: app)
+        createVariable(name: "token", value: "before", in: app)
+        app.typeKey(.escape, modifierFlags: [])
+
+        configureRequest(in: app, url: "http://127.0.0.1:9999/delay/5")
+        configureScript(
+            #"curly.variables.global.set("token", "after");"#,
+            in: app
+        )
+        triggerRun(app)
+        openVariables(in: app)
+
+        let beforeField = app.textFields.matching(NSPredicate(format: "value == %@", "before")).firstMatch
+        XCTAssertTrue(beforeField.waitForExistence(timeout: 2))
+        beforeField.click()
+        let afterField = app.textFields.matching(NSPredicate(format: "value == %@", "after")).firstMatch
+        XCTAssertTrue(
+            afterField.waitForExistence(timeout: 8),
+            "The open editor should adopt the script's committed value when it has no local edit."
+        )
+        app.typeKey(.tab, modifierFlags: [])
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariables(in: app)
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "after"))
+                .firstMatch.waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(app.textFields.matching(NSPredicate(format: "value == %@", "before")).firstMatch.exists)
+    }
+
     func testInvalidScriptPreventsDispatchAndShowsInlineDiagnostic() {
         let app = launchApp()
         defer { app.terminate() }
@@ -232,7 +327,26 @@ final class PostResponseScriptsUITests: XCTestCase {
         let editor = app.textViews["post-response-script-editor"].firstMatch
         XCTAssertTrue(editor.waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["post-response-script-api-button"].firstMatch.exists)
+        let requestScrollView = app.scrollViews["request-pane-scroll-view"].firstMatch
+        for _ in 0..<3 where !editor.isHittable {
+            requestScrollView.swipeUp()
+        }
+        XCTAssertTrue(editor.isHittable)
         replaceText(source, in: editor)
+    }
+
+    private func revealPostResponseScript(in app: XCUIApplication) {
+        let checkbox = app.checkBoxes["post-response-script-enabled"].firstMatch
+        if checkbox.exists {
+            return
+        }
+        let row = app.buttons["request-accordion-post-response script"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        if !row.isHittable {
+            app.scrollViews["request-pane-scroll-view"].firstMatch.swipeUp()
+        }
+        row.click()
+        XCTAssertTrue(checkbox.waitForExistence(timeout: 3))
     }
 
     private func openVariables(in app: XCUIApplication) {
@@ -240,6 +354,38 @@ final class PostResponseScriptsUITests: XCTestCase {
         XCTAssertTrue(menuItem.waitForExistence(timeout: 3))
         menuItem.click()
         XCTAssertTrue(app.staticTexts["Variables"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    private func createVariable(name: String, value: String, in app: XCUIApplication) {
+        let addButton = app.buttons["Add Global Variable"].firstMatch
+        XCTAssertTrue(addButton.waitForExistence(timeout: 3))
+        let nameFields = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "variable-name-field-")
+        )
+        let existingIdentifiers = Set(nameFields.allElementsBoundByIndex.map(\.identifier))
+        addButton.click()
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            nameFields.allElementsBoundByIndex.contains { !existingIdentifiers.contains($0.identifier) }
+        })
+        guard let nameField = nameFields.allElementsBoundByIndex.first(where: {
+            !existingIdentifiers.contains($0.identifier)
+        }) else {
+            return XCTFail("Expected a variable draft.")
+        }
+        let valueIdentifier = nameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: "variable-value-field-"
+        )
+        let valueField = app.textFields[valueIdentifier].firstMatch
+        nameField.click()
+        nameField.typeText(name)
+        valueField.click()
+        valueField.typeText(value)
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", name)).firstMatch
+                .waitForExistence(timeout: 3)
+        )
     }
 
     private func replaceText(_ text: String, in element: XCUIElement) {

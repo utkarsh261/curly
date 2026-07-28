@@ -24,6 +24,183 @@ final class VariablesUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
     }
 
+    func testImportedCurlNestedHeaderResolvesBeforeDispatch() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: urlField
+        )
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            urlField.value as? String == "https://api.example.com/users"
+        })
+
+        triggerRun(app)
+
+        let responseBody = app.staticTexts["response-body-text"].firstMatch
+        XCTAssertTrue(responseBody.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let text = (responseBody.value as? String) ?? responseBody.label
+            return text.contains("Authorization=Bearer abc")
+        })
+    }
+
+    func testHeaderAndNestedVariableFieldsShowLiveRecognitionBeforeDispatch() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+
+        let nestedValueField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "Bearer {{token}}"))
+            .firstMatch
+        XCTAssertTrue(nestedValueField.waitForExistence(timeout: 2))
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                nestedValueField.label.contains("Recognized variable token")
+            },
+            "Expected the nested variable value to expose its recognized token before dispatch; label: \(nestedValueField.label)"
+        )
+
+        app.typeKey(.escape, modifierFlags: [])
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+
+        let headerValueField = variableFields(named: "header-value-field-", in: app).firstMatch
+        XCTAssertTrue(headerValueField.waitForExistence(timeout: 3))
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                headerValueField.label.contains("Recognized variable authorization")
+            },
+            "Expected the header to expose its recognized variable before dispatch; label: \(headerValueField.label)"
+        )
+        XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
+
+        replaceText("Bearer {{missing_token}}", in: headerValueField)
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                headerValueField.label.contains("Missing variable missing_token")
+            },
+            "Expected missing header variables to be visible before dispatch; label: \(headerValueField.label)"
+        )
+        XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
+    }
+
+    func testNestedMissingLeafShowsModalWarningAndBlocksDispatch() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+        XCTAssertTrue(
+            app.staticTexts["variable-resolution-warning"].firstMatch
+                .waitForExistence(timeout: 3)
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: urlField
+        )
+        triggerRun(app)
+
+        XCTAssertTrue(
+            app.staticTexts["Define token before running this request."].firstMatch
+                .waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
+    }
+
+    func testNestedCycleShowsInlineErrorAndBlocksDispatch() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "a", value: "{{b}}", addButton: "Add Global Variable", in: app)
+        createVariable(name: "b", value: "{{a}}", addButton: "Add Global Variable", in: app)
+        XCTAssertTrue(
+            app.staticTexts["variable-validation-message"].firstMatch
+                .waitForExistence(timeout: 3)
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText("https://example.com/{{a}}", in: urlField)
+        triggerRun(app)
+
+        XCTAssertTrue(
+            app.staticTexts["Request Issue"].firstMatch.waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
+    }
+
+    func testNestedHeaderVariablesPersistAcrossRelaunch() {
+        let libraryID = UUID().uuidString
+        var app: XCUIApplication? = launchPersistentStubApp(libraryID: libraryID)
+
+        openVariablesModal(in: app!)
+        createVariable(name: "token", value: "persisted", addButton: "Add Global Variable", in: app!)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app!
+        )
+        app!.typeKey(.escape, modifierFlags: [])
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: app!.textFields["url-input-field"].firstMatch
+        )
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            app!.textFields["url-input-field"].firstMatch.value as? String == "https://api.example.com/users"
+        })
+        // XCUIApplication.terminate force-stops the process, so allow the normal
+        // draft persistence debounce to commit before simulating a relaunch.
+        Thread.sleep(forTimeInterval: 0.5)
+        app!.terminate()
+        app = nil
+
+        let relaunched = launchPersistentStubApp(libraryID: libraryID)
+        defer { relaunched.terminate() }
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            relaunched.textFields["url-input-field"].firstMatch.value as? String == "https://api.example.com/users"
+        })
+        triggerRun(relaunched)
+        let responseBody = relaunched.staticTexts["response-body-text"].firstMatch
+        XCTAssertTrue(responseBody.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let text = (responseBody.value as? String) ?? responseBody.label
+            return text.contains("Authorization=Bearer persisted")
+        })
+    }
+
     func testURLBarRemainsEditableAfterVariableDisplayAppears() throws {
         let app = launchWithStubExecutor()
         defer { app.terminate() }
@@ -184,6 +361,98 @@ final class VariablesUITests: XCTestCase {
         })
     }
 
+    func testVariablesModalSavesNameOnlyDraftAndRenameWhenClosedDirectly() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        app.buttons["Add Global Variable"].firstMatch.click()
+        let draftName = variableFields(named: "variable-name-field-", in: app).firstMatch
+        XCTAssertTrue(draftName.waitForExistence(timeout: 2))
+        draftName.click()
+        draftName.typeText("name_only")
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariablesModal(in: app)
+        let savedName = app.textFields.matching(NSPredicate(format: "value == %@", "name_only")).firstMatch
+        XCTAssertTrue(savedName.waitForExistence(timeout: 2))
+        savedName.click()
+        savedName.typeKey("a", modifierFlags: .command)
+        savedName.typeText("renamed_directly")
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariablesModal(in: app)
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "renamed_directly"))
+                .firstMatch.waitForExistence(timeout: 2)
+        )
+        XCTAssertFalse(app.textFields.matching(NSPredicate(format: "value == %@", "name_only")).firstMatch.exists)
+    }
+
+    func testExistingVariableDiagnosticsFollowUnsavedNestedValue() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(name: "authorization", value: "{{missing}}", addButton: "Add Global Variable", in: app)
+        let warning = app.staticTexts["variable-resolution-warning"].firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 2))
+
+        let matchingValueField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "{{missing}}"))
+            .firstMatch
+        XCTAssertTrue(matchingValueField.waitForExistence(timeout: 2))
+        let valueField = app.textFields[matchingValueField.identifier].firstMatch
+        replaceText("Bearer {{token}}", in: valueField)
+
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                valueField.label.contains("Recognized variable token") && !warning.exists
+            },
+            "Expected inline color/accessibility and the row diagnostic to use the same unsaved value."
+        )
+    }
+
+    func testNestedDependenciesAreMarkedUsedInVariablesModal() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+        let tokenNameField = app.textFields.matching(NSPredicate(format: "value == %@", "token")).firstMatch
+        let authorizationNameField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "authorization"))
+            .firstMatch
+        let tokenID = tokenNameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: ""
+        )
+        let authorizationID = authorizationNameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: ""
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+        openVariablesModal(in: app)
+
+        XCTAssertTrue(app.otherElements["variable-used-indicator-\(authorizationID)"].firstMatch.exists)
+        XCTAssertTrue(
+            app.otherElements["variable-used-indicator-\(tokenID)"].firstMatch.exists,
+            "A transitively referenced variable should be marked as used."
+        )
+    }
+
     func testVariablesModalShowsInlineValidationAndKeepsDraftEditable() throws {
         let app = launchWithStubExecutor()
         defer { app.terminate() }
@@ -274,6 +543,20 @@ final class VariablesUITests: XCTestCase {
             app.activate()
             app.typeKey("0", modifierFlags: .command)
         }
+        return app
+    }
+
+    private func launchPersistentStubApp(libraryID: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "--ui-test-mode",
+            "--ui-test-stub-executor",
+            "--ui-test-enable-persistence",
+            "--ui-test-library-id",
+            libraryID
+        ]
+        app.launch()
+        XCTAssertTrue(app.textFields["url-input-field"].firstMatch.waitForExistence(timeout: 5))
         return app
     }
 
