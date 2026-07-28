@@ -245,6 +245,7 @@ struct VariableToken: Equatable, Identifiable {
     var status: VariableTokenStatus
     var resolvedValue: String?
     var scope: VariableScope?
+    var diagnostic: String? = nil
 }
 
 enum VariableTemplateSegment: Equatable, Identifiable {
@@ -261,12 +262,62 @@ enum VariableTemplateSegment: Equatable, Identifiable {
     }
 }
 
+enum VariableExpansionIssue: Equatable, Hashable {
+    case missing(name: String, path: [String])
+    case invalidSyntax(token: String, path: [String])
+    case cycle(path: [String])
+    case depthExceeded(path: [String], limit: Int)
+    case outputTooLarge(path: [String], limitBytes: Int)
+
+    var diagnostic: String {
+        switch self {
+        case .missing(let name, let path):
+            guard path.count > 1 else {
+                return "\(name) is missing"
+            }
+            return "\(path.joined(separator: " → ")) refers to missing variable \(name)"
+        case .invalidSyntax(let token, let path):
+            let prefix = path.isEmpty ? "" : "\(path.joined(separator: " → ")): "
+            return "\(prefix)\(token) has invalid syntax"
+        case .cycle(let path):
+            return "Circular variable reference: \(path.joined(separator: " → "))"
+        case .depthExceeded(let path, let limit):
+            return "Variable reference exceeds \(limit) levels: \(path.joined(separator: " → "))"
+        case .outputTooLarge(let path, let limitBytes):
+            let target = path.isEmpty ? "Expanded value" : path.joined(separator: " → ")
+            return "\(target) exceeds the \(limitBytes / 1_024) KiB expanded-value limit"
+        }
+    }
+
+    var missingName: String? {
+        guard case .missing(let name, _) = self else { return nil }
+        return name
+    }
+
+    var invalidToken: String? {
+        guard case .invalidSyntax(let token, _) = self else { return nil }
+        return token
+    }
+}
+
+struct VariableExpansion: Equatable {
+    var value: String?
+    var issues: [VariableExpansionIssue]
+    var maximumDepth: Int
+    var deepestPath: [String]
+
+    var isResolved: Bool {
+        value != nil && issues.isEmpty
+    }
+}
+
 struct VariableResolutionResult: Equatable {
     var resolvedRequest: Request?
     var urlTokens: [VariableToken]
     var headerValueTokensByHeaderID: [UUID: [VariableToken]]
     var missingNames: [String]
     var invalidTokens: [String]
+    var expansionIssues: [VariableExpansionIssue]
     var errorMessage: String?
 
     var hasErrors: Bool {
@@ -285,7 +336,10 @@ enum VariableTemplateParser {
     }
 
     static func parse(_ text: String, variables: [Variable]) -> [VariableTemplateSegment] {
-        parse(text, variablesByName: VariableLookup(variables: variables).variablesByName)
+        let variablesByName = VariableLookup(variables: variables).variablesByName
+        let segments = parse(text, variablesByName: variablesByName)
+        var resolver = VariableValueResolver(variablesByName: variablesByName)
+        return resolver.decorateForPreview(segments)
     }
 
     static func parse(
@@ -385,9 +439,7 @@ enum VariableTemplateParser {
         to segments: inout [VariableTemplateSegment]
     ) {
         let rawText = source.substring(with: range)
-        let attemptedName = String(rawText.dropFirst(2))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard mode == .execution, !attemptedName.isEmpty else {
+        guard mode == .execution else {
             appendTextIfNeeded(rawText, range: range, to: &segments)
             return
         }
@@ -402,74 +454,285 @@ enum VariableTemplateParser {
     }
 }
 
+struct VariableValueResolver {
+    static let maximumDepth = 16
+    static let maximumExpandedUTF8Bytes = 64 * 1_024
+
+    private struct CacheEntry {
+        var value: String
+        var maximumDepth: Int
+        var deepestPath: [String]
+    }
+
+    private let variablesByName: [String: Variable]
+    private var resolvedCache: [String: CacheEntry] = [:]
+
+    init(variablesByName: [String: Variable]) {
+        self.variablesByName = variablesByName
+    }
+
+    mutating func decorateForPreview(_ segments: [VariableTemplateSegment]) -> [VariableTemplateSegment] {
+        segments.map { segment in
+            guard case .token(var token) = segment,
+                  token.status == .resolved,
+                  let name = token.name else {
+                return segment
+            }
+            let expansion = resolveVariable(named: name)
+            if let value = expansion.value, expansion.issues.isEmpty {
+                token.resolvedValue = value
+                token.diagnostic = nil
+            } else {
+                token.resolvedValue = nil
+                token.status = expansion.issues.contains(where: { $0.missingName != nil }) ? .missing : .invalid
+                token.diagnostic = expansion.issues.first?.diagnostic
+            }
+            return .token(token)
+        }
+    }
+
+    mutating func expand(
+        _ segments: [VariableTemplateSegment],
+        enforceOutputLimit: Bool
+    ) -> (segments: [VariableTemplateSegment], value: String?, issues: [VariableExpansionIssue]) {
+        var decorated: [VariableTemplateSegment] = []
+        var issues: [VariableExpansionIssue] = []
+        var rendered = ""
+        var containsToken = false
+
+        for segment in segments {
+            switch segment {
+            case .text(let text, let range):
+                decorated.append(.text(text, range))
+                rendered += text
+            case .token(var token):
+                containsToken = true
+                guard token.status == .resolved, let name = token.name else {
+                    let issue: VariableExpansionIssue
+                    if token.status == .missing, let name = token.name {
+                        issue = .missing(name: name, path: [name])
+                    } else {
+                        issue = .invalidSyntax(token: token.rawText, path: [])
+                    }
+                    token.diagnostic = issue.diagnostic
+                    decorated.append(.token(token))
+                    issues.append(issue)
+                    continue
+                }
+
+                let expansion = resolveVariable(named: name)
+                if let value = expansion.value, expansion.issues.isEmpty {
+                    token.resolvedValue = value
+                    token.diagnostic = nil
+                    rendered += value
+                } else {
+                    token.resolvedValue = nil
+                    token.status = expansion.issues.contains(where: { $0.missingName != nil }) ? .missing : .invalid
+                    token.diagnostic = expansion.issues.first?.diagnostic
+                    issues.append(contentsOf: expansion.issues)
+                }
+                decorated.append(.token(token))
+            }
+        }
+
+        issues = Self.uniqueIssues(issues)
+        if issues.isEmpty,
+           enforceOutputLimit,
+           containsToken,
+           rendered.utf8.count > Self.maximumExpandedUTF8Bytes {
+            issues.append(.outputTooLarge(path: [], limitBytes: Self.maximumExpandedUTF8Bytes))
+        }
+        return (decorated, issues.isEmpty ? rendered : nil, issues)
+    }
+
+    mutating func resolveVariable(named name: String) -> VariableExpansion {
+        resolveVariable(named: name, stack: [])
+    }
+
+    private mutating func resolveVariable(named name: String, stack: [String]) -> VariableExpansion {
+        if let cycleStart = stack.firstIndex(of: name) {
+            return VariableExpansion(
+                value: nil,
+                issues: [.cycle(path: Array(stack[cycleStart...]) + [name])],
+                maximumDepth: stack.count + 1,
+                deepestPath: stack + [name]
+            )
+        }
+
+        if stack.count >= Self.maximumDepth {
+            let path = stack + [name]
+            return VariableExpansion(
+                value: nil,
+                issues: [.depthExceeded(path: path, limit: Self.maximumDepth)],
+                maximumDepth: path.count,
+                deepestPath: path
+            )
+        }
+
+        if let cached = resolvedCache[name] {
+            if stack.count + cached.maximumDepth > Self.maximumDepth {
+                let allowedCount = max(0, Self.maximumDepth + 1 - stack.count)
+                let path = stack + Array(cached.deepestPath.prefix(allowedCount))
+                return VariableExpansion(
+                    value: nil,
+                    issues: [.depthExceeded(path: path, limit: Self.maximumDepth)],
+                    maximumDepth: stack.count + cached.maximumDepth,
+                    deepestPath: path
+                )
+            }
+            return VariableExpansion(
+                value: cached.value,
+                issues: [],
+                maximumDepth: cached.maximumDepth,
+                deepestPath: cached.deepestPath
+            )
+        }
+
+        guard let variable = variablesByName[name] else {
+            let path = stack + [name]
+            return VariableExpansion(
+                value: nil,
+                issues: [.missing(name: name, path: path)],
+                maximumDepth: path.count,
+                deepestPath: path
+            )
+        }
+
+        let currentStack = stack + [name]
+        let segments = VariableTemplateParser.parse(
+            variable.value,
+            variablesByName: variablesByName,
+            mode: .execution
+        )
+        var rendered = ""
+        var issues: [VariableExpansionIssue] = []
+        var maximumDepth = 1
+        var deepestPath = [name]
+
+        for segment in segments {
+            switch segment {
+            case .text(let text, _):
+                rendered += text
+            case .token(let token):
+                guard token.status == .resolved, let dependencyName = token.name else {
+                    if token.status == .missing, let missingName = token.name {
+                        issues.append(.missing(name: missingName, path: currentStack + [missingName]))
+                    } else {
+                        issues.append(.invalidSyntax(token: token.rawText, path: currentStack))
+                    }
+                    continue
+                }
+
+                let dependency = resolveVariable(named: dependencyName, stack: currentStack)
+                if let value = dependency.value, dependency.issues.isEmpty {
+                    rendered += value
+                } else {
+                    issues.append(contentsOf: dependency.issues)
+                }
+                let candidateDepth = 1 + dependency.maximumDepth
+                if candidateDepth > maximumDepth {
+                    maximumDepth = candidateDepth
+                    deepestPath = [name] + dependency.deepestPath
+                }
+            }
+        }
+
+        issues = Self.uniqueIssues(issues)
+        if issues.isEmpty, rendered.utf8.count > Self.maximumExpandedUTF8Bytes {
+            issues.append(.outputTooLarge(path: currentStack, limitBytes: Self.maximumExpandedUTF8Bytes))
+        }
+        guard issues.isEmpty else {
+            return VariableExpansion(
+                value: nil,
+                issues: issues,
+                maximumDepth: maximumDepth,
+                deepestPath: deepestPath
+            )
+        }
+
+        let entry = CacheEntry(value: rendered, maximumDepth: maximumDepth, deepestPath: deepestPath)
+        resolvedCache[name] = entry
+        return VariableExpansion(
+            value: rendered,
+            issues: [],
+            maximumDepth: maximumDepth,
+            deepestPath: deepestPath
+        )
+    }
+
+    private static func uniqueIssues(_ issues: [VariableExpansionIssue]) -> [VariableExpansionIssue] {
+        var seen: Set<VariableExpansionIssue> = []
+        return issues.filter { seen.insert($0).inserted }
+    }
+}
+
 enum VariableResolver {
     static func resolve(_ request: Request, variables: [Variable]) -> VariableResolutionResult {
         let variablesByName = VariableLookup(variables: variables).variablesByName
-        let urlSegments = VariableTemplateParser.parse(
+        var resolver = VariableValueResolver(variablesByName: variablesByName)
+        let parsedURLSegments = VariableTemplateParser.parse(
             request.urlString,
             variablesByName: variablesByName,
             mode: .execution
         )
-        let urlTokens = tokens(from: urlSegments)
-        var missingNames = missingNames(from: urlTokens)
-        var invalidTokens = invalidTokens(from: urlTokens)
-        let resolvedURL = render(urlSegments)
+        let urlExpansion = resolver.expand(parsedURLSegments, enforceOutputLimit: true)
+        let urlTokens = tokens(from: urlExpansion.segments)
+        var expansionIssues = urlExpansion.issues
         var resolvedHeaders: [Header] = []
         var headerValueTokensByHeaderID: [UUID: [VariableToken]] = [:]
 
         for header in request.headers {
-            let valueSegments = VariableTemplateParser.parse(
+            let parsedValueSegments = VariableTemplateParser.parse(
                 header.value,
                 variablesByName: variablesByName,
                 mode: header.isEnabled ? .execution : .editing
             )
-            let valueTokens = tokens(from: valueSegments)
+            let valueExpansion: (segments: [VariableTemplateSegment], value: String?, issues: [VariableExpansionIssue])
+            if header.isEnabled {
+                valueExpansion = resolver.expand(parsedValueSegments, enforceOutputLimit: true)
+            } else {
+                valueExpansion = (resolver.decorateForPreview(parsedValueSegments), header.value, [])
+            }
+            let valueTokens = tokens(from: valueExpansion.segments)
             headerValueTokensByHeaderID[header.id] = valueTokens
 
             var resolvedHeader = header
             if header.isEnabled {
-                missingNames.append(contentsOf: self.missingNames(from: valueTokens))
-                invalidTokens.append(contentsOf: self.invalidTokens(from: valueTokens))
+                expansionIssues.append(contentsOf: valueExpansion.issues)
 
                 let nameSegments = VariableTemplateParser.parse(
                     header.name,
                     variablesByName: variablesByName,
                     mode: .execution
                 )
-                invalidTokens.append(contentsOf: tokens(from: nameSegments).map(\.rawText))
-                resolvedHeader.value = render(valueSegments)
+                expansionIssues.append(contentsOf: tokens(from: nameSegments).map {
+                    .invalidSyntax(token: $0.rawText, path: [])
+                })
+                if let resolvedValue = valueExpansion.value {
+                    resolvedHeader.value = resolvedValue
+                }
             }
             resolvedHeaders.append(resolvedHeader)
         }
 
-        missingNames = uniqueSorted(missingNames)
-        invalidTokens = uniqueSorted(invalidTokens)
-
-        if !invalidTokens.isEmpty {
-            return VariableResolutionResult(
-                resolvedRequest: nil,
-                urlTokens: urlTokens,
-                headerValueTokensByHeaderID: headerValueTokensByHeaderID,
-                missingNames: [],
-                invalidTokens: invalidTokens,
-                errorMessage: invalidSyntaxMessage(invalidTokens)
-            )
-        }
-
-        if !missingNames.isEmpty {
+        expansionIssues = uniqueIssues(expansionIssues)
+        let missingNames = uniqueSorted(expansionIssues.compactMap(\.missingName))
+        let invalidTokens = uniqueSorted(expansionIssues.compactMap(\.invalidToken))
+        if !expansionIssues.isEmpty {
             return VariableResolutionResult(
                 resolvedRequest: nil,
                 urlTokens: urlTokens,
                 headerValueTokensByHeaderID: headerValueTokensByHeaderID,
                 missingNames: missingNames,
-                invalidTokens: [],
-                errorMessage: missingVariablesMessage(missingNames)
+                invalidTokens: invalidTokens,
+                expansionIssues: expansionIssues,
+                errorMessage: expansionIssuesMessage(expansionIssues)
             )
         }
 
         let resolvedRequest = Request(
             method: request.method,
-            urlString: resolvedURL,
+            urlString: urlExpansion.value ?? request.urlString,
             headers: resolvedHeaders,
             body: request.body,
             tlsCertificateVerification: request.tlsCertificateVerification
@@ -482,6 +745,7 @@ enum VariableResolver {
                 headerValueTokensByHeaderID: headerValueTokensByHeaderID,
                 missingNames: [],
                 invalidTokens: [],
+                expansionIssues: [],
                 errorMessage: validationMessage
             )
         }
@@ -492,6 +756,7 @@ enum VariableResolver {
             headerValueTokensByHeaderID: headerValueTokensByHeaderID,
             missingNames: [],
             invalidTokens: [],
+            expansionIssues: [],
             errorMessage: nil
         )
     }
@@ -505,32 +770,13 @@ enum VariableResolver {
         }
     }
 
-    private static func render(_ segments: [VariableTemplateSegment]) -> String {
-        segments.map { segment in
-            switch segment {
-            case .text(let text, _):
-                return text
-            case .token(let token):
-                return token.resolvedValue ?? token.rawText
-            }
-        }
-        .joined()
-    }
-
-    private static func missingNames(from tokens: [VariableToken]) -> [String] {
-        tokens.compactMap { token in
-            token.status == .missing ? token.name : nil
-        }
-    }
-
-    private static func invalidTokens(from tokens: [VariableToken]) -> [String] {
-        tokens.compactMap { token in
-            token.status == .invalid ? token.rawText : nil
-        }
-    }
-
     private static func uniqueSorted(_ values: [String]) -> [String] {
         Array(Set(values)).sorted()
+    }
+
+    private static func uniqueIssues(_ issues: [VariableExpansionIssue]) -> [VariableExpansionIssue] {
+        var seen: Set<VariableExpansionIssue> = []
+        return issues.filter { seen.insert($0).inserted }
     }
 
     static func missingVariablesMessage(_ names: [String]) -> String {
@@ -553,6 +799,46 @@ enum VariableResolver {
             return "Fix invalid variable syntax. Use {{name}} with no spaces."
         }
         return "Fix invalid variable syntax. Use {{name}} with no spaces. Invalid: \(examples)"
+    }
+
+    static func expansionIssuesMessage(_ issues: [VariableExpansionIssue]) -> String {
+        let invalid = uniqueSorted(issues.compactMap(\.invalidToken))
+        let cycles = issues.compactMap { issue -> String? in
+            guard case .cycle(let path) = issue else { return nil }
+            return path.joined(separator: " → ")
+        }
+        let missing = uniqueSorted(issues.compactMap(\.missingName))
+        let depths = issues.compactMap { issue -> String? in
+            guard case .depthExceeded(let path, _) = issue else { return nil }
+            return path.joined(separator: " → ")
+        }
+        let oversized = issues.compactMap { issue -> String? in
+            guard case .outputTooLarge(let path, _) = issue else { return nil }
+            return path.isEmpty ? "request field" : path.joined(separator: " → ")
+        }
+
+        if !invalid.isEmpty, cycles.isEmpty, missing.isEmpty, depths.isEmpty, oversized.isEmpty {
+            return invalidSyntaxMessage(invalid)
+        }
+        if invalid.isEmpty, cycles.isEmpty, !missing.isEmpty, depths.isEmpty, oversized.isEmpty {
+            return missingVariablesMessage(missing)
+        }
+
+        var groups: [String] = []
+        appendIssueGroup(label: "Invalid", values: invalid, to: &groups)
+        appendIssueGroup(label: "Circular", values: cycles, to: &groups)
+        appendIssueGroup(label: "Missing", values: missing, to: &groups)
+        appendIssueGroup(label: "Too deep", values: depths, to: &groups)
+        appendIssueGroup(label: "Too large", values: oversized, to: &groups)
+        return "Fix variable references before running. " + groups.joined(separator: ". ")
+    }
+
+    private static func appendIssueGroup(label: String, values: [String], to groups: inout [String]) {
+        guard !values.isEmpty else { return }
+        let unique = uniqueSorted(values)
+        let displayed = unique.prefix(3).joined(separator: ", ")
+        let suffix = unique.count > 3 ? " +\(unique.count - 3) more" : ""
+        groups.append("\(label): \(displayed)\(suffix)")
     }
 }
 

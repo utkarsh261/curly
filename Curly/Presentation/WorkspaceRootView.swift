@@ -696,7 +696,10 @@ private struct RequestComposerView: View {
                     text: $url,
                     variables: variables,
                     placeholder: "Paste a URL or cURL command",
-                    isFocused: isURLFieldFocused,
+                    isFocused: Binding(
+                        get: { isURLFieldFocused.wrappedValue },
+                        set: { isURLFieldFocused.wrappedValue = $0 }
+                    ),
                     focusRequest: urlFocusRequest,
                     onPaste: onPaste
                 )
@@ -790,37 +793,37 @@ private struct HeaderRowView: View {
                 }
             }
 
-            ZStack(alignment: .leading) {
-                TextField(
-                    "Value",
-                    text: Binding(
-                        get: { header.value },
-                        set: { coordinator.updateHeader(id: header.id, value: $0) }
+            URLInputField(
+                text: Binding(
+                    get: { header.value },
+                    set: { coordinator.updateHeader(id: header.id, value: $0) }
+                ),
+                variables: coordinator.listVariablesForCurrentContext(),
+                placeholder: "Value",
+                isFocused: Binding(
+                    get: { isValueFocused },
+                    set: { isValueFocused = $0 }
+                ),
+                focusRequest: 0,
+                onPaste: { _ in false },
+                accessibilityIdentifier: "header-value-field-\(header.id.uuidString)",
+                accessibilityLabel: "Header value",
+                enablesRequestImport: false
+            )
+            .frame(minHeight: 22)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(nsColor: .textBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(
+                                isValueFocused ? Color.accent : Color.borderSubtle.opacity(0.75),
+                                lineWidth: isValueFocused ? 1.5 : 1
+                            )
                     )
-                )
-                .textFieldStyle(.roundedBorder)
-                .focused($isValueFocused)
-                .opacity(isValueFocused || !valueContainsVariable ? 1 : 0)
-                .accessibilityIdentifier("header-value-field-\(header.id.uuidString)")
-
-                if !isValueFocused && valueContainsVariable {
-                    VariableTemplateDisplay(segments: valueSegments)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color(nsColor: .textBackgroundColor))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(Color.borderSubtle.opacity(0.75), lineWidth: 1)
-                                )
-                        )
-                        .accessibilityIdentifier("header-value-variable-template-display")
-                        .onTapGesture {
-                            isValueFocused = true
-                        }
-                }
-            }
+            )
 
             Button {
                 coordinator.removeHeader(id: header.id)
@@ -842,82 +845,6 @@ private struct HeaderRowView: View {
         )
     }
 
-    private var valueSegments: [VariableTemplateSegment] {
-        VariableTemplateParser.parse(header.value, variables: coordinator.listVariablesForCurrentContext())
-    }
-
-    private var valueContainsVariable: Bool {
-        valueSegments.contains { segment in
-            if case .token = segment {
-                return true
-            }
-            return false
-        }
-    }
-}
-
-private struct VariableTemplateDisplay: View {
-    let segments: [VariableTemplateSegment]
-
-    var body: some View {
-        HStack(spacing: 3) {
-            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
-                switch segment {
-                case .text(let text, _):
-                    Text(text.isEmpty ? " " : text)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                case .token(let token):
-                    VariableTokenChip(token: token)
-                }
-            }
-        }
-        .font(.body.monospaced())
-        .lineLimit(1)
-    }
-}
-
-private struct VariableTokenChip: View {
-    let token: VariableToken
-
-    var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(tint)
-                .frame(width: 5, height: 5)
-            Text(token.name ?? token.rawText)
-                .font(.caption.monospaced().weight(.semibold))
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(
-            Capsule(style: .continuous)
-                .fill(tint.opacity(0.14))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .stroke(tint.opacity(0.5), lineWidth: 1)
-                )
-        )
-        .foregroundStyle(tint)
-        .help(helpText)
-        .accessibilityIdentifier("variable-token-chip-\(token.name ?? "invalid")")
-    }
-
-    private var tint: Color {
-        VariableTokenPalette.color(for: token.status)
-    }
-
-    private var helpText: String {
-        switch token.status {
-        case .resolved:
-            return "\(token.name ?? token.rawText) resolves to \(token.resolvedValue ?? "")"
-        case .missing:
-            return "\(token.name ?? token.rawText) is missing"
-        case .invalid:
-            return "\(token.rawText) has invalid syntax"
-        }
-    }
 }
 
 private struct RequestEditorAccordion: View {
@@ -1564,11 +1491,20 @@ private struct VariableDraftRowView: View {
                 .frame(width: VariableTableLayout.nameWidth)
                 .accessibilityIdentifier("variable-name-field-\(id.uuidString)")
 
-            TextField("value", text: $value)
-                .focused($focusedField, equals: .value)
+            URLInputField(
+                text: $value,
+                variables: coordinator.listVariablesForCurrentContext(),
+                placeholder: "value",
+                isFocused: valueFocusBinding,
+                focusRequest: 0,
+                onPaste: { _ in false },
+                accessibilityIdentifier: "variable-value-field-\(id.uuidString)",
+                accessibilityLabel: "Variable value",
+                enablesRequestImport: false,
+                onCommit: saveIfPossible
+            )
                 .modifier(VariableFieldStyle(isFocused: focusedField == .value))
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("variable-value-field-\(id.uuidString)")
 
             VariableDeleteButton(
                 accessibilityIdentifier: "variable-delete-button-\(id.uuidString)",
@@ -1585,10 +1521,26 @@ private struct VariableDraftRowView: View {
             saveIfPossible()
         }
         .onChange(of: focusedField) { oldValue, newValue in
-            if oldValue != nil && newValue == nil {
-                saveIfPossible()
+            if oldValue == .value && newValue == nil {
+                DispatchQueue.main.async {
+                    guard focusedField == nil else { return }
+                    saveIfPossible()
+                }
             }
         }
+    }
+
+    private var valueFocusBinding: Binding<Bool> {
+        Binding(
+            get: { focusedField == .value },
+            set: { isFocused in
+                if isFocused {
+                    focusedField = .value
+                } else if focusedField == .value {
+                    focusedField = nil
+                }
+            }
+        )
     }
 
     private func saveIfPossible() {
@@ -1630,18 +1582,32 @@ private struct VariableEditableRowView: View {
     }
 
     var body: some View {
-        variableRowShell(isUsed: isUsed, validationMessage: validationMessage) {
+        variableRowShell(
+            isUsed: isUsed,
+            validationMessage: validationMessage ?? resolutionDiagnostic?.message,
+            validationIsWarning: validationMessage == nil && resolutionDiagnostic?.isWarning == true
+        ) {
             TextField("name", text: $name)
                 .focused($focusedField, equals: .name)
                 .modifier(VariableFieldStyle(isFocused: focusedField == .name))
                 .frame(width: VariableTableLayout.nameWidth)
                 .accessibilityIdentifier("variable-name-field-\(variable.id.uuidString)")
 
-            TextField("value", text: $value)
-                .focused($focusedField, equals: .value)
+            URLInputField(
+                text: $value,
+                variables: previewVariables,
+                placeholder: "value",
+                isFocused: valueFocusBinding,
+                focusRequest: 0,
+                onPaste: { _ in false },
+                accessibilityIdentifier: "variable-value-field-\(variable.id.uuidString)",
+                accessibilityLabel: "Variable value",
+                enablesRequestImport: false,
+                onCommit: saveIfChanged
+            )
                 .modifier(VariableFieldStyle(isFocused: focusedField == .value))
                 .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("variable-value-field-\(variable.id.uuidString)")
+                .help(valueHelpText)
 
             VariableDeleteButton(
                 accessibilityIdentifier: "variable-delete-button-\(variable.id.uuidString)",
@@ -1654,8 +1620,13 @@ private struct VariableEditableRowView: View {
             saveIfChanged()
         }
         .onChange(of: focusedField) { oldValue, newValue in
-            if oldValue != nil && newValue == nil {
+            if oldValue == .name && newValue == .value {
                 saveIfChanged()
+            } else if oldValue == .value && newValue == nil {
+                DispatchQueue.main.async {
+                    guard focusedField == nil else { return }
+                    saveIfChanged()
+                }
             }
         }
         .confirmationDialog(
@@ -1674,6 +1645,47 @@ private struct VariableEditableRowView: View {
         let resolution = coordinator.resolveCurrentRequestForRun()
         return resolution.urlTokens.contains(where: { $0.name == variable.name }) ||
             resolution.headerValueTokensByHeaderID.values.flatMap { $0 }.contains(where: { $0.name == variable.name })
+    }
+
+    private var valueFocusBinding: Binding<Bool> {
+        Binding(
+            get: { focusedField == .value },
+            set: { isFocused in
+                if isFocused {
+                    focusedField = .value
+                } else if focusedField == .value {
+                    focusedField = nil
+                }
+            }
+        )
+    }
+
+    private var previewVariables: [Variable] {
+        let normalizedName = Variable.normalizedNameForStorage(name)
+        return coordinator.listVariablesForCurrentContext().map { candidate in
+            guard candidate.id == variable.id else { return candidate }
+            var preview = candidate
+            if Variable.isValidName(normalizedName) {
+                preview.name = normalizedName
+            }
+            preview.value = value
+            return preview
+        }
+    }
+
+    private var resolutionDiagnostic: (message: String, isWarning: Bool)? {
+        guard let issue = coordinator.resolveVariableForPreview(named: variable.name).issues.first else {
+            return nil
+        }
+        return (issue.diagnostic, issue.missingName != nil)
+    }
+
+    private var valueHelpText: String {
+        let expansion = coordinator.resolveVariableForPreview(named: variable.name)
+        if let issue = expansion.issues.first {
+            return issue.diagnostic
+        }
+        return expansion.value.map { "\(variable.name) resolves to \($0)" } ?? variable.value
     }
 
     private func saveIfChanged() {
@@ -1695,6 +1707,7 @@ private struct VariableEditableRowView: View {
 private func variableRowShell<Content: View>(
     isUsed: Bool = false,
     validationMessage: String?,
+    validationIsWarning: Bool = false,
     @ViewBuilder content: () -> Content
 ) -> some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -1716,10 +1729,12 @@ private func variableRowShell<Content: View>(
         if let validationMessage {
             Text(validationMessage)
                 .font(.caption)
-                .foregroundStyle(.red)
+                .foregroundStyle(validationIsWarning ? Color.orange : Color.red)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
-                .accessibilityIdentifier("variable-validation-message")
+                .accessibilityIdentifier(
+                    validationIsWarning ? "variable-resolution-warning" : "variable-validation-message"
+                )
         }
     }
 }

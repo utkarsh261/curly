@@ -838,6 +838,73 @@ final class SessionCoordinatorTests: XCTestCase {
         )
     }
 
+    func testRunRecursivelyResolvesHeaderWithoutMutatingWorkspaceOrVariables() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(requestExecutor: executor)
+        coordinator.setURL("https://example.com/users")
+        coordinator.addHeader()
+        let headerID = coordinator.state.workspaceRequest.headers[0].id
+        coordinator.updateHeader(id: headerID, name: "Authorization", value: "{{authorization}}")
+        XCTAssertNotNil(coordinator.createVariable(name: "scheme", value: "Bearer", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "abc", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(
+            name: "authorization",
+            value: "{{scheme}} {{token}}",
+            scope: .global
+        ))
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+
+        let sent = await executor.invocations[0]
+        XCTAssertEqual(sent.headers.first?.value, "Bearer abc")
+        XCTAssertEqual(coordinator.state.workspaceRequest.headers.first?.value, "{{authorization}}")
+        XCTAssertEqual(
+            coordinator.listVariablesForCurrentContext().first(where: { $0.name == "authorization" })?.value,
+            "{{scheme}} {{token}}"
+        )
+        await executor.resumeFailure(ExecutionError.transport("test complete"))
+    }
+
+    func testTransitiveVariableChangeMarksResponseStaleOnlyWhenEffectiveRequestChanges() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com")
+        coordinator.addHeader()
+        let headerID = coordinator.state.workspaceRequest.headers[0].id
+        coordinator.updateHeader(id: headerID, name: "Authorization", value: "{{authorization}}")
+        let token = try! XCTUnwrap(coordinator.createVariable(name: "token", value: "before", scope: .global))
+        let wrapper = try! XCTUnwrap(coordinator.createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        ))
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data("ok".utf8),
+            mimeType: "text/plain",
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.executionState == .succeeded }
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, false)
+
+        coordinator.updateVariableValue(id: wrapper.id, value: "Bearer {{token}}")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, false)
+
+        coordinator.updateVariableValue(id: token.id, value: "after")
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+    }
+
     func testRunBlocksMissingVariableWithoutExecutorInvocation() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(requestExecutor: executor)
@@ -1102,6 +1169,60 @@ final class SessionCoordinatorTests: XCTestCase {
 
         let secondRequest = await executor.invocations[1]
         XCTAssertEqual(secondRequest.urlString, "https://example.com/sessions/abc-123")
+        await executor.resumeFailure(ExecutionError.transport("test complete"))
+    }
+
+    func testScriptUpdatedLeafIsRecursivelyResolvedInHeaderOnNextRun() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        coordinator.setURL("https://example.com/session")
+        coordinator.addHeader()
+        let headerID = coordinator.state.workspaceRequest.headers[0].id
+        coordinator.updateHeader(id: headerID, name: "Authorization", value: "{{authorization}}")
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "before", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        ))
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(
+            "curly.variables.global.set(\"token\", curly.response.json().nextToken);"
+        )
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let firstRequest = await executor.invocations[0]
+        XCTAssertEqual(firstRequest.headers.first?.value, "Bearer before")
+        await executor.resumeSuccess(ExecutedResponse(
+            request: firstRequest,
+            statusCode: 200,
+            headers: [],
+            bodyData: Data(#"{"nextToken":"after"}"#.utf8),
+            mimeType: "application/json",
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+
+        XCTAssertEqual(
+            coordinator.listVariablesForCurrentContext().first(where: { $0.name == "authorization" })?.value,
+            "Bearer {{token}}"
+        )
+        XCTAssertEqual(
+            coordinator.listVariablesForCurrentContext().first(where: { $0.name == "token" })?.value,
+            "after"
+        )
+        XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
+
+        coordinator.setPostResponseScriptEnabled(false)
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 2 }
+        let secondRequest = await executor.invocations[1]
+        XCTAssertEqual(secondRequest.headers.first?.value, "Bearer after")
         await executor.resumeFailure(ExecutionError.transport("test complete"))
     }
 

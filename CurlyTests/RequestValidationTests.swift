@@ -22,6 +22,36 @@ final class RequestValidationTests: XCTestCase {
     }
 
     @MainActor
+    func testSharedVariableFieldEditorColorsNestedResolutionBeforeDispatch() throws {
+        let authorization = Variable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        )
+        let editor = URLTokenFieldEditor()
+        editor.string = "{{authorization}}"
+        let tokenRange = try XCTUnwrap(URLTokenEditingPolicy.tokenRanges(in: editor.string).first)
+        let textField = PasteAwareTextField()
+
+        textField.variables = [
+            authorization,
+            Variable(name: "token", value: "abc", scope: .global)
+        ]
+        textField.prepareFieldEditor(editor)
+        XCTAssertEqual(
+            editor.textStorage?.attribute(.foregroundColor, at: tokenRange.location, effectiveRange: nil) as? NSColor,
+            .controlAccentColor
+        )
+
+        textField.variables = [authorization]
+        textField.prepareFieldEditor(editor)
+        XCTAssertEqual(
+            editor.textStorage?.attribute(.foregroundColor, at: tokenRange.location, effectiveRange: nil) as? NSColor,
+            .systemRed
+        )
+    }
+
+    @MainActor
     func testURLFieldEditorScrollsHorizontallyWithoutChangingTextOrSelection() {
         let clipView = NSClipView(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         let editor = URLTokenFieldEditor(frame: NSRect(x: 0, y: 0, width: 1_000, height: 24))
@@ -56,6 +86,30 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .missing), .systemRed)
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .invalid), .systemRed)
         XCTAssertEqual(VariableTokenPalette.nsColor(for: .resolved), .controlAccentColor)
+    }
+
+    func testVariableTemplateFieldAccessibilityDescribesLiveNestedResolution() {
+        let token = Variable(name: "token", value: "abc", scope: .global)
+        let authorization = Variable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        )
+
+        XCTAssertEqual(
+            VariableTemplateFieldAccessibility.description(
+                text: "{{authorization}}",
+                variables: [token, authorization]
+            ),
+            "Recognized variable authorization. Resolves to Bearer abc."
+        )
+        XCTAssertEqual(
+            VariableTemplateFieldAccessibility.description(
+                text: "Bearer {{token}}",
+                variables: [authorization]
+            ),
+            "Missing variable token."
+        )
     }
 
     func testVariablesModalHeightFitsContentWithinCompactBounds() {
@@ -321,7 +375,7 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(resolved.headerValueTokensByHeaderID[disabled.id]?.first?.status, .missing)
     }
 
-    func testVariableResolverBlocksInvalidSyntaxBeforeMissingVariables() {
+    func testVariableResolverGroupsInvalidSyntaxAndMissingVariables() {
         let request = Request(
             method: .get,
             urlString: "https://{{ base_url }}/{{user_id}}",
@@ -333,8 +387,11 @@ final class RequestValidationTests: XCTestCase {
 
         XCTAssertNil(result.resolvedRequest)
         XCTAssertEqual(result.invalidTokens, ["{{ base_url }}"])
-        XCTAssertEqual(result.missingNames, [])
-        XCTAssertEqual(result.errorMessage, "Fix invalid variable syntax. Use {{name}} with no spaces. Invalid: {{ base_url }}")
+        XCTAssertEqual(result.missingNames, ["user_id"])
+        XCTAssertEqual(
+            result.errorMessage,
+            "Fix variable references before running. Invalid: {{ base_url }}. Missing: user_id"
+        )
     }
 
     func testVariableResolverRejectsTemplatesInEnabledHeaderNames() {
@@ -364,6 +421,18 @@ final class RequestValidationTests: XCTestCase {
 
         XCTAssertNil(result.resolvedRequest)
         XCTAssertEqual(result.invalidTokens, ["{{token"])
+
+        let emptyToken = VariableResolver.resolve(
+            Request(
+                method: .get,
+                urlString: "https://example.com",
+                headers: [Header(name: "X-Template", value: "{{", isEnabled: true)],
+                body: .none
+            ),
+            variables: []
+        )
+        XCTAssertNil(emptyToken.resolvedRequest)
+        XCTAssertEqual(emptyToken.invalidTokens, ["{{"])
     }
 
     func testVariableResolverIgnoresTemplatesInDisabledHeaders() {
@@ -376,16 +445,267 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertNil(result.errorMessage)
     }
 
-    func testVariableResolverDoesNotResolveRecursively() {
-        let request = Request(method: .get, urlString: "https://{{base_url}}/users", headers: [], body: .none)
+    func testVariableResolverRecursivelyResolvesURLAndHeaderValues() {
+        let header = Header(name: "Authorization", value: "{{authorization}}", isEnabled: true)
+        let request = Request(
+            method: .get,
+            urlString: "{{base_url}}/users",
+            headers: [header],
+            body: .none
+        )
         let variables = [
-            Variable(name: "base_url", value: "{{host}}", scope: .global),
-            Variable(name: "host", value: "example.com", scope: .global)
+            Variable(name: "scheme", value: "https", scope: .global),
+            Variable(name: "host", value: "example.com", scope: .global),
+            Variable(name: "base_url", value: "{{scheme}}://{{host}}", scope: .global),
+            Variable(name: "token", value: "abc", scope: .global),
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global)
+        ]
+
+        let result = VariableResolver.resolve(request, variables: variables)
+
+        XCTAssertEqual(result.resolvedRequest?.urlString, "https://example.com/users")
+        XCTAssertEqual(result.resolvedRequest?.headers.first?.value, "Bearer abc")
+        XCTAssertEqual(result.urlTokens.first?.resolvedValue, "https://example.com")
+        XCTAssertEqual(result.headerValueTokensByHeaderID[header.id]?.first?.resolvedValue, "Bearer abc")
+        XCTAssertEqual(request.urlString, "{{base_url}}/users")
+        XCTAssertEqual(request.headers.first?.value, "{{authorization}}")
+    }
+
+    func testVariableResolverReportsMissingNestedLeafAndDependencyContext() {
+        let request = Request(method: .get, urlString: "https://example.com", headers: [
+            Header(name: "Authorization", value: "{{authorization}}")
+        ], body: .none)
+        let variables = [
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global)
         ]
 
         let result = VariableResolver.resolve(request, variables: variables)
 
         XCTAssertNil(result.resolvedRequest)
-        XCTAssertEqual(result.errorMessage, "The URL is not valid yet.")
+        XCTAssertEqual(result.missingNames, ["token"])
+        XCTAssertEqual(result.errorMessage, "Define token before running this request.")
+        XCTAssertEqual(
+            result.expansionIssues,
+            [.missing(name: "token", path: ["authorization", "token"])]
+        )
+        XCTAssertEqual(result.headerValueTokensByHeaderID.values.first?.first?.status, .missing)
+        XCTAssertEqual(
+            result.headerValueTokensByHeaderID.values.first?.first?.diagnostic,
+            "authorization → token refers to missing variable token"
+        )
+    }
+
+    func testVariableResolverReportsSelfAndIndirectCycles() {
+        let selfCycle = VariableResolver.resolve(
+            Request(method: .get, urlString: "https://example.com/{{self_ref}}", headers: [], body: .none),
+            variables: [Variable(name: "self_ref", value: "{{self_ref}}", scope: .global)]
+        )
+        XCTAssertEqual(
+            selfCycle.expansionIssues,
+            [.cycle(path: ["self_ref", "self_ref"])]
+        )
+        XCTAssertEqual(
+            selfCycle.errorMessage,
+            "Fix variable references before running. Circular: self_ref → self_ref"
+        )
+
+        let indirectCycle = VariableResolver.resolve(
+            Request(method: .get, urlString: "https://example.com/{{a}}", headers: [], body: .none),
+            variables: [
+                Variable(name: "a", value: "{{b}}", scope: .global),
+                Variable(name: "b", value: "{{c}}", scope: .global),
+                Variable(name: "c", value: "{{a}}", scope: .global)
+            ]
+        )
+        XCTAssertEqual(
+            indirectCycle.expansionIssues,
+            [.cycle(path: ["a", "b", "c", "a"])]
+        )
+    }
+
+    func testVariableResolverUsesNewestDuplicateInsideNestedExpansion() {
+        let older = Variable(
+            name: "token",
+            value: "old",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 1),
+            updatedAt: Date(timeIntervalSince1970: 1)
+        )
+        let newer = Variable(
+            name: "token",
+            value: "new",
+            scope: .global,
+            createdAt: Date(timeIntervalSince1970: 2),
+            updatedAt: Date(timeIntervalSince1970: 2)
+        )
+        let authorization = Variable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        )
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "Authorization", value: "{{authorization}}")],
+            body: .none
+        )
+
+        let result = VariableResolver.resolve(
+            request,
+            variables: [authorization, older, newer]
+        )
+
+        XCTAssertEqual(result.resolvedRequest?.headers.first?.value, "Bearer new")
+    }
+
+    func testVariableResolverRejectsInvalidSyntaxInsideNestedValue() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "Authorization", value: "{{authorization}}")],
+            body: .none
+        )
+        let result = VariableResolver.resolve(request, variables: [
+            Variable(
+                name: "authorization",
+                value: "Bearer {{ token }} and {{unfinished",
+                scope: .global
+            )
+        ])
+
+        XCTAssertNil(result.resolvedRequest)
+        XCTAssertEqual(result.invalidTokens, ["{{ token }}", "{{unfinished"])
+        XCTAssertEqual(
+            result.expansionIssues,
+            [
+                .invalidSyntax(token: "{{ token }}", path: ["authorization"]),
+                .invalidSyntax(token: "{{unfinished", path: ["authorization"])
+            ]
+        )
+    }
+
+    func testVariableResolverLimitsEachDiagnosticCategoryToThreeExamples() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com/{{a}}/{{b}}/{{c}}/{{d}}",
+            headers: [Header(name: "X-Invalid", value: "{{ bad1 }}{{ bad2 }}{{ bad3 }}{{ bad4 }}")],
+            body: .none
+        )
+
+        let result = VariableResolver.resolve(request, variables: [])
+
+        XCTAssertEqual(
+            result.errorMessage,
+            "Fix variable references before running. " +
+                "Invalid: {{ bad1 }}, {{ bad2 }}, {{ bad3 }} +1 more. " +
+                "Missing: a, b, c +1 more"
+        )
+    }
+
+    func testVariableResolverOnlyValidatesReachableChains() {
+        let request = Request(
+            method: .get,
+            urlString: "https://{{host}}",
+            headers: [Header(name: "X-Disabled", value: "{{bad}}", isEnabled: false)],
+            body: .none
+        )
+        let variables = [
+            Variable(name: "host", value: "example.com", scope: .global),
+            Variable(name: "bad", value: "{{missing}}", scope: .global),
+            Variable(name: "cycle", value: "{{cycle}}", scope: .global)
+        ]
+
+        let result = VariableResolver.resolve(request, variables: variables)
+
+        XCTAssertEqual(result.resolvedRequest?.urlString, "https://example.com")
+        XCTAssertNil(result.errorMessage)
+    }
+
+    func testVariableResolverEnforcesSixteenLevelDepthLimit() {
+        func variables(count: Int) -> [Variable] {
+            (1...count).map { index in
+                Variable(
+                    name: "v\(index)",
+                    value: index == count ? "done" : "{{v\(index + 1)}}",
+                    scope: .global
+                )
+            }
+        }
+        let request = Request(method: .get, urlString: "https://example.com/{{v1}}", headers: [], body: .none)
+
+        XCTAssertEqual(
+            VariableResolver.resolve(request, variables: variables(count: 16)).resolvedRequest?.urlString,
+            "https://example.com/done"
+        )
+
+        let tooDeep = VariableResolver.resolve(request, variables: variables(count: 17))
+        XCTAssertNil(tooDeep.resolvedRequest)
+        guard case .depthExceeded(let path, let limit) = tooDeep.expansionIssues.first else {
+            return XCTFail("Expected a depth error")
+        }
+        XCTAssertEqual(limit, 16)
+        XCTAssertEqual(path, (1...17).map { "v\($0)" })
+    }
+
+    func testVariableResolverEnforcesExpandedUTF8ByteLimit() {
+        let request = Request(method: .get, urlString: "https://example.com", headers: [
+            Header(name: "X-Large", value: "{{large}}")
+        ], body: .none)
+
+        let atLimit = VariableResolver.resolve(request, variables: [
+            Variable(name: "large", value: String(repeating: "x", count: 64 * 1_024), scope: .global)
+        ])
+        XCTAssertEqual(atLimit.resolvedRequest?.headers.first?.value.utf8.count, 64 * 1_024)
+
+        let overLimit = VariableResolver.resolve(request, variables: [
+            Variable(name: "large", value: String(repeating: "é", count: 32 * 1_024 + 1), scope: .global)
+        ])
+        XCTAssertNil(overLimit.resolvedRequest)
+        XCTAssertEqual(
+            overLimit.expansionIssues,
+            [.outputTooLarge(path: ["large"], limitBytes: 64 * 1_024)]
+        )
+    }
+
+    func testVariableResolverPreservesWhitespaceEmptyValuesAndLiteralBody() {
+        let request = Request(
+            method: .post,
+            urlString: "https://example.com",
+            headers: [
+                Header(name: "X-Whitespace", value: "prefix{{spaced}}suffix"),
+                Header(name: "X-Empty", value: "{{empty}}")
+            ],
+            body: .text(#"{"token":"{{spaced}}"}"#)
+        )
+        let result = VariableResolver.resolve(request, variables: [
+            Variable(name: "spaced", value: " value ", scope: .global),
+            Variable(name: "empty", value: "", scope: .global)
+        ])
+
+        XCTAssertEqual(result.resolvedRequest?.headers[0].value, "prefix value suffix")
+        XCTAssertEqual(result.resolvedRequest?.headers[1].value, "")
+        XCTAssertEqual(result.resolvedRequest?.body, .text(#"{"token":"{{spaced}}"}"#))
+    }
+
+    func testVariablePreviewUsesFinalNestedValueAndDiagnostic() {
+        let valid = VariableTemplateParser.parse("{{authorization}}", variables: [
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global),
+            Variable(name: "token", value: "abc", scope: .global)
+        ])
+        guard case .token(let resolvedToken) = valid.first else {
+            return XCTFail("Expected token")
+        }
+        XCTAssertEqual(resolvedToken.status, .resolved)
+        XCTAssertEqual(resolvedToken.resolvedValue, "Bearer abc")
+        XCTAssertNil(resolvedToken.diagnostic)
+
+        let invalid = VariableTemplateParser.parse("{{authorization}}", variables: [
+            Variable(name: "authorization", value: "Bearer {{missing}}", scope: .global)
+        ])
+        guard case .token(let invalidToken) = invalid.first else {
+            return XCTFail("Expected token")
+        }
+        XCTAssertEqual(invalidToken.status, .missing)
+        XCTAssertEqual(invalidToken.diagnostic, "authorization → missing refers to missing variable missing")
     }
 }

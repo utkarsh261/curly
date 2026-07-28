@@ -424,6 +424,14 @@ final class SessionCoordinator: ObservableObject {
         VariableResolver.resolve(state.workspaceRequest, variables: listVariablesForCurrentContext())
     }
 
+    func resolveVariableForPreview(named name: String) -> VariableExpansion {
+        let variables = listVariablesForCurrentContext()
+        var resolver = VariableValueResolver(
+            variablesByName: VariableLookup(variables: variables).variablesByName
+        )
+        return resolver.resolveVariable(named: name)
+    }
+
     var currentRequestIssueMessage: String? {
         if let inlineMessage = state.inlineMessage {
             return inlineMessage.text
