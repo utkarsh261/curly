@@ -467,6 +467,10 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(result.resolvedRequest?.headers.first?.value, "Bearer abc")
         XCTAssertEqual(result.urlTokens.first?.resolvedValue, "https://example.com")
         XCTAssertEqual(result.headerValueTokensByHeaderID[header.id]?.first?.resolvedValue, "Bearer abc")
+        XCTAssertEqual(
+            result.referencedVariableNames,
+            Set(["authorization", "base_url", "host", "scheme", "token"])
+        )
         XCTAssertEqual(request.urlString, "{{base_url}}/users")
         XCTAssertEqual(request.headers.first?.value, "{{authorization}}")
     }
@@ -520,6 +524,19 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(
             indirectCycle.expansionIssues,
             [.cycle(path: ["a", "b", "c", "a"])]
+        )
+
+        let repeatedCycle = VariableResolver.resolve(
+            Request(method: .get, urlString: "https://example.com/{{b}}/{{a}}", headers: [], body: .none),
+            variables: [
+                Variable(name: "a", value: "{{b}}", scope: .global),
+                Variable(name: "b", value: "{{a}}", scope: .global)
+            ]
+        )
+        XCTAssertEqual(
+            repeatedCycle.expansionIssues,
+            [.cycle(path: ["a", "b", "a"])],
+            "Rotations of the same logical cycle must consume only one diagnostic slot."
         )
     }
 
@@ -664,6 +681,122 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertEqual(
             overLimit.expansionIssues,
             [.outputTooLarge(path: ["large"], limitBytes: 64 * 1_024)]
+        )
+    }
+
+    func testVariableResolverStopsMaterializingAtExpandedUTF8ByteLimit() {
+        let leaf = Variable(
+            name: "leaf",
+            value: String(repeating: "x", count: VariableValueResolver.maximumExpandedUTF8Bytes),
+            scope: .global
+        )
+        let amplified = Variable(
+            name: "amplified",
+            value: String(repeating: "{{leaf}}", count: 128),
+            scope: .global
+        )
+        var resolver = VariableValueResolver(
+            variablesByName: VariableLookup(variables: [leaf, amplified]).variablesByName
+        )
+
+        let expansion = resolver.resolveVariable(named: "amplified")
+
+        XCTAssertEqual(
+            expansion.issues,
+            [.outputTooLarge(path: ["amplified"], limitBytes: VariableValueResolver.maximumExpandedUTF8Bytes)]
+        )
+        XCTAssertLessThanOrEqual(
+            resolver.maximumMaterializedUTF8Bytes,
+            VariableValueResolver.maximumExpandedUTF8Bytes,
+            "The resolver must reject amplification before allocating the complete expanded value."
+        )
+    }
+
+    func testVariableResolverMemoizesRepeatedContextIndependentFailures() {
+        let invalidLeaf = Variable(name: "invalid_leaf", value: "{{missing}}", scope: .global)
+        let fanOut = Variable(
+            name: "fan_out",
+            value: String(repeating: "{{invalid_leaf}}", count: 250),
+            scope: .global
+        )
+        var resolver = VariableValueResolver(
+            variablesByName: VariableLookup(variables: [invalidLeaf, fanOut]).variablesByName
+        )
+
+        let expansion = resolver.resolveVariable(named: "fan_out")
+
+        XCTAssertEqual(
+            expansion.issues,
+            [.missing(name: "missing", path: ["fan_out", "invalid_leaf", "missing"])]
+        )
+        XCTAssertEqual(
+            resolver.uncachedResolutionCount,
+            2,
+            "The failed leaf should be evaluated once and reused for every sibling reference."
+        )
+    }
+
+    func testFailureCacheRebasesDepthForNearLimitReuse() {
+        var variables = [
+            Variable(name: "bad", value: "{{missing}}", scope: .global),
+            Variable(name: "warmup", value: "{{bad}}", scope: .global)
+        ]
+        variables.append(contentsOf: (1...14).map { index in
+            Variable(
+                name: "v\(index)",
+                value: index == 14 ? "{{bad}}" : "{{v\(index + 1)}}",
+                scope: .global
+            )
+        })
+        variables.append(Variable(name: "v0", value: "{{v1}}", scope: .global))
+        var resolver = VariableValueResolver(
+            variablesByName: VariableLookup(variables: variables).variablesByName
+        )
+
+        XCTAssertEqual(
+            resolver.resolveVariable(named: "warmup").issues,
+            [.missing(name: "missing", path: ["warmup", "bad", "missing"])]
+        )
+        XCTAssertEqual(
+            resolver.resolveVariable(named: "v1").issues,
+            [.missing(
+                name: "missing",
+                path: (1...14).map { "v\($0)" } + ["bad", "missing"]
+            )],
+            "The missing reference at level sixteen must still report the cached missing leaf."
+        )
+        XCTAssertEqual(
+            resolver.resolveVariable(named: "v0").issues,
+            [.depthExceeded(
+                path: ["v0"] + (1...14).map { "v\($0)" } + ["bad", "missing"],
+                limit: VariableValueResolver.maximumDepth
+            )],
+            "The missing reference at level seventeen must report depth before reusing the cached failure."
+        )
+    }
+
+    func testVariableResolverTracksReachableNamesButExcludesDisabledHeaders() {
+        let request = Request(
+            method: .get,
+            urlString: "https://{{base}}",
+            headers: [
+                Header(name: "Authorization", value: "{{authorization}}"),
+                Header(name: "X-Disabled", value: "{{ignored}}", isEnabled: false)
+            ],
+            body: .none
+        )
+        let result = VariableResolver.resolve(request, variables: [
+            Variable(name: "base", value: "{{host}}", scope: .global),
+            Variable(name: "host", value: "example.com", scope: .global),
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global),
+            Variable(name: "token", value: "abc", scope: .global),
+            Variable(name: "ignored", value: "{{also_ignored}}", scope: .global),
+            Variable(name: "also_ignored", value: "value", scope: .global)
+        ])
+
+        XCTAssertEqual(
+            result.referencedVariableNames,
+            Set(["authorization", "base", "host", "token"])
         )
     }
 

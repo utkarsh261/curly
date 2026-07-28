@@ -143,6 +143,41 @@ final class PostResponseScriptsUITests: XCTestCase {
         XCTAssertTrue(waitUntil(timeout: 5) { self.text(of: status).contains("Passed") })
     }
 
+    func testOpenVariableEditorAdoptsPostScriptWriteWithoutRestoringStaleValue() {
+        let app = launchApp()
+        defer { app.terminate() }
+
+        openVariables(in: app)
+        createVariable(name: "token", value: "before", in: app)
+        app.typeKey(.escape, modifierFlags: [])
+
+        configureRequest(in: app, url: "http://127.0.0.1:9999/delay/5")
+        configureScript(
+            #"curly.variables.global.set("token", "after");"#,
+            in: app
+        )
+        triggerRun(app)
+        openVariables(in: app)
+
+        let beforeField = app.textFields.matching(NSPredicate(format: "value == %@", "before")).firstMatch
+        XCTAssertTrue(beforeField.waitForExistence(timeout: 2))
+        beforeField.click()
+        let afterField = app.textFields.matching(NSPredicate(format: "value == %@", "after")).firstMatch
+        XCTAssertTrue(
+            afterField.waitForExistence(timeout: 8),
+            "The open editor should adopt the script's committed value when it has no local edit."
+        )
+        app.typeKey(.tab, modifierFlags: [])
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariables(in: app)
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "after"))
+                .firstMatch.waitForExistence(timeout: 3)
+        )
+        XCTAssertFalse(app.textFields.matching(NSPredicate(format: "value == %@", "before")).firstMatch.exists)
+    }
+
     func testInvalidScriptPreventsDispatchAndShowsInlineDiagnostic() {
         let app = launchApp()
         defer { app.terminate() }

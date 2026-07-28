@@ -193,7 +193,7 @@ struct WorkspaceRootView: View {
                     .ignoresSafeArea()
                     .accessibilityIdentifier("variables-modal-backdrop")
                     .onTapGesture {
-                        coordinator.dismissVariablesModal()
+                        dismissVariablesModalSavingEdits()
                     }
 
                 VariablesModalView(maximumHeight: geometry.size.height - 48)
@@ -203,6 +203,13 @@ struct WorkspaceRootView: View {
             }
         }
         .accessibilityIdentifier("variables-modal-overlay")
+    }
+
+    private func dismissVariablesModalSavingEdits() {
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        DispatchQueue.main.async {
+            coordinator.dismissVariablesModal()
+        }
     }
 
     private var requestHeader: some View {
@@ -1279,7 +1286,7 @@ private struct VariablesModalView: View {
                 Spacer()
 
                 Button {
-                    coordinator.dismissVariablesModal()
+                    dismissVariablesModalSavingEdits()
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .semibold))
@@ -1360,6 +1367,13 @@ private struct VariablesModalView: View {
 
     private var modalHeight: CGFloat {
         VariableModalMetrics.height(contentHeight: measuredContentHeight, availableHeight: maximumHeight)
+    }
+
+    private func dismissVariablesModalSavingEdits() {
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        DispatchQueue.main.async {
+            coordinator.dismissVariablesModal()
+        }
     }
 
     private func scrollToDraft(_ draftID: UUID?, using proxy: ScrollViewProxy) {
@@ -1481,6 +1495,7 @@ private struct VariableDraftRowView: View {
     @State private var name = ""
     @State private var value = ""
     @State private var validationMessage: String?
+    @State private var didFinish = false
     @FocusState private var focusedField: Field?
 
     var body: some View {
@@ -1509,7 +1524,10 @@ private struct VariableDraftRowView: View {
             VariableDeleteButton(
                 accessibilityIdentifier: "variable-delete-button-\(id.uuidString)",
                 accessibilityLabel: "Discard Variable Draft",
-                action: onFinish
+                action: {
+                    didFinish = true
+                    onFinish()
+                }
             )
         }
         .onAppear {
@@ -1528,6 +1546,9 @@ private struct VariableDraftRowView: View {
                 }
             }
         }
+        .onDisappear {
+            saveIfPossible()
+        }
     }
 
     private var valueFocusBinding: Binding<Bool> {
@@ -1544,8 +1565,10 @@ private struct VariableDraftRowView: View {
     }
 
     private func saveIfPossible() {
+        guard !didFinish else { return }
         let normalized = Variable.normalizedNameForStorage(name)
         if normalized.isEmpty && value.isEmpty {
+            didFinish = true
             onFinish()
             return
         }
@@ -1557,6 +1580,7 @@ private struct VariableDraftRowView: View {
             validationMessage = "A variable named \(normalized) already exists."
             return
         }
+        didFinish = true
         onFinish()
     }
 }
@@ -1571,6 +1595,8 @@ private struct VariableEditableRowView: View {
     let variable: Variable
     @State private var name: String
     @State private var value: String
+    @State private var committedName: String
+    @State private var committedValue: String
     @State private var validationMessage: String?
     @State private var isDeleteConfirmationPresented = false
     @FocusState private var focusedField: Field?
@@ -1579,11 +1605,14 @@ private struct VariableEditableRowView: View {
         self.variable = variable
         _name = State(initialValue: variable.name)
         _value = State(initialValue: variable.value)
+        _committedName = State(initialValue: variable.name)
+        _committedValue = State(initialValue: variable.value)
     }
 
     var body: some View {
         variableRowShell(
             isUsed: isUsed,
+            usedIndicatorIdentifier: "variable-used-indicator-\(variable.id.uuidString)",
             validationMessage: validationMessage ?? resolutionDiagnostic?.message,
             validationIsWarning: validationMessage == nil && resolutionDiagnostic?.isWarning == true
         ) {
@@ -1629,6 +1658,21 @@ private struct VariableEditableRowView: View {
                 }
             }
         }
+        .onChange(of: variable.name) { oldValue, newValue in
+            if name == oldValue {
+                name = newValue
+            }
+            committedName = newValue
+        }
+        .onChange(of: variable.value) { oldValue, newValue in
+            if value == oldValue {
+                value = newValue
+            }
+            committedValue = newValue
+        }
+        .onDisappear {
+            saveIfChanged()
+        }
         .confirmationDialog(
             "Delete \(variable.name)?",
             isPresented: $isDeleteConfirmationPresented,
@@ -1642,9 +1686,7 @@ private struct VariableEditableRowView: View {
     }
 
     private var isUsed: Bool {
-        let resolution = coordinator.resolveCurrentRequestForRun()
-        return resolution.urlTokens.contains(where: { $0.name == variable.name }) ||
-            resolution.headerValueTokensByHeaderID.values.flatMap { $0 }.contains(where: { $0.name == variable.name })
+        coordinator.resolveCurrentRequestForRun().referencedVariableNames.contains(variable.name)
     }
 
     private var valueFocusBinding: Binding<Bool> {
@@ -1674,22 +1716,33 @@ private struct VariableEditableRowView: View {
     }
 
     private var resolutionDiagnostic: (message: String, isWarning: Bool)? {
-        guard let issue = coordinator.resolveVariableForPreview(named: variable.name).issues.first else {
+        guard let issue = previewExpansion.issues.first else {
             return nil
         }
         return (issue.diagnostic, issue.missingName != nil)
     }
 
     private var valueHelpText: String {
-        let expansion = coordinator.resolveVariableForPreview(named: variable.name)
-        if let issue = expansion.issues.first {
+        if let issue = previewExpansion.issues.first {
             return issue.diagnostic
         }
-        return expansion.value.map { "\(variable.name) resolves to \($0)" } ?? variable.value
+        return previewExpansion.value.map { "\(previewVariableName) resolves to \($0)" } ?? value
+    }
+
+    private var previewVariableName: String {
+        let normalizedName = Variable.normalizedNameForStorage(name)
+        return Variable.isValidName(normalizedName) ? normalizedName : variable.name
+    }
+
+    private var previewExpansion: VariableExpansion {
+        var resolver = VariableValueResolver(
+            variablesByName: VariableLookup(variables: previewVariables).variablesByName
+        )
+        return resolver.resolveVariable(named: previewVariableName)
     }
 
     private func saveIfChanged() {
-        guard name != variable.name || value != variable.value else { return }
+        guard name != committedName || value != committedValue else { return }
         let normalized = Variable.normalizedNameForStorage(name)
         guard Variable.isValidName(normalized) else {
             validationMessage = "Use letters, numbers, underscores, or hyphens. Start with a letter or underscore."
@@ -1699,6 +1752,9 @@ private struct VariableEditableRowView: View {
             validationMessage = "A variable named \(normalized) already exists."
             return
         }
+        name = normalized
+        committedName = normalized
+        committedValue = value
         validationMessage = nil
     }
 }
@@ -1706,6 +1762,7 @@ private struct VariableEditableRowView: View {
 @ViewBuilder
 private func variableRowShell<Content: View>(
     isUsed: Bool = false,
+    usedIndicatorIdentifier: String = "variable-used-indicator",
     validationMessage: String?,
     validationIsWarning: Bool = false,
     @ViewBuilder content: () -> Content
@@ -1723,6 +1780,9 @@ private func variableRowShell<Content: View>(
                     .fill(Color.accent)
                     .frame(width: 2)
                     .padding(.vertical, 8)
+                    .accessibilityElement()
+                    .accessibilityLabel("Variable is used by the current request")
+                    .accessibilityIdentifier(usedIndicatorIdentifier)
             }
         }
 

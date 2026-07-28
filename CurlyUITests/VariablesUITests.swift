@@ -361,6 +361,98 @@ final class VariablesUITests: XCTestCase {
         })
     }
 
+    func testVariablesModalSavesNameOnlyDraftAndRenameWhenClosedDirectly() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        app.buttons["Add Global Variable"].firstMatch.click()
+        let draftName = variableFields(named: "variable-name-field-", in: app).firstMatch
+        XCTAssertTrue(draftName.waitForExistence(timeout: 2))
+        draftName.click()
+        draftName.typeText("name_only")
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariablesModal(in: app)
+        let savedName = app.textFields.matching(NSPredicate(format: "value == %@", "name_only")).firstMatch
+        XCTAssertTrue(savedName.waitForExistence(timeout: 2))
+        savedName.click()
+        savedName.typeKey("a", modifierFlags: .command)
+        savedName.typeText("renamed_directly")
+        app.typeKey(.escape, modifierFlags: [])
+
+        openVariablesModal(in: app)
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", "renamed_directly"))
+                .firstMatch.waitForExistence(timeout: 2)
+        )
+        XCTAssertFalse(app.textFields.matching(NSPredicate(format: "value == %@", "name_only")).firstMatch.exists)
+    }
+
+    func testExistingVariableDiagnosticsFollowUnsavedNestedValue() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(name: "authorization", value: "{{missing}}", addButton: "Add Global Variable", in: app)
+        let warning = app.staticTexts["variable-resolution-warning"].firstMatch
+        XCTAssertTrue(warning.waitForExistence(timeout: 2))
+
+        let matchingValueField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "{{missing}}"))
+            .firstMatch
+        XCTAssertTrue(matchingValueField.waitForExistence(timeout: 2))
+        let valueField = app.textFields[matchingValueField.identifier].firstMatch
+        replaceText("Bearer {{token}}", in: valueField)
+
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                valueField.label.contains("Recognized variable token") && !warning.exists
+            },
+            "Expected inline color/accessibility and the row diagnostic to use the same unsaved value."
+        )
+    }
+
+    func testNestedDependenciesAreMarkedUsedInVariablesModal() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+        let tokenNameField = app.textFields.matching(NSPredicate(format: "value == %@", "token")).firstMatch
+        let authorizationNameField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "authorization"))
+            .firstMatch
+        let tokenID = tokenNameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: ""
+        )
+        let authorizationID = authorizationNameField.identifier.replacingOccurrences(
+            of: "variable-name-field-",
+            with: ""
+        )
+        app.typeKey(.escape, modifierFlags: [])
+
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+        openVariablesModal(in: app)
+
+        XCTAssertTrue(app.otherElements["variable-used-indicator-\(authorizationID)"].firstMatch.exists)
+        XCTAssertTrue(
+            app.otherElements["variable-used-indicator-\(tokenID)"].firstMatch.exists,
+            "A transitively referenced variable should be marked as used."
+        )
+    }
+
     func testVariablesModalShowsInlineValidationAndKeepsDraftEditable() throws {
         let app = launchWithStubExecutor()
         defer { app.terminate() }

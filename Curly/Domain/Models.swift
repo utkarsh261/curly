@@ -298,6 +298,24 @@ enum VariableExpansionIssue: Equatable, Hashable {
         guard case .invalidSyntax(let token, _) = self else { return nil }
         return token
     }
+
+    var canonicalized: VariableExpansionIssue {
+        guard case .cycle(let path) = self,
+              path.count > 2,
+              path.first == path.last else {
+            return self
+        }
+        let members = Array(path.dropLast())
+        let rotations = members.indices.map { index in
+            Array(members[index...]) + Array(members[..<index])
+        }
+        guard let canonicalMembers = rotations.min(by: {
+            $0.lexicographicallyPrecedes($1, by: <)
+        }), let first = canonicalMembers.first else {
+            return self
+        }
+        return .cycle(path: canonicalMembers + [first])
+    }
 }
 
 struct VariableExpansion: Equatable {
@@ -305,6 +323,7 @@ struct VariableExpansion: Equatable {
     var issues: [VariableExpansionIssue]
     var maximumDepth: Int
     var deepestPath: [String]
+    var referencedVariableNames: Set<String>
 
     var isResolved: Bool {
         value != nil && issues.isEmpty
@@ -315,6 +334,7 @@ struct VariableResolutionResult: Equatable {
     var resolvedRequest: Request?
     var urlTokens: [VariableToken]
     var headerValueTokensByHeaderID: [UUID: [VariableToken]]
+    var referencedVariableNames: Set<String>
     var missingNames: [String]
     var invalidTokens: [String]
     var expansionIssues: [VariableExpansionIssue]
@@ -462,10 +482,21 @@ struct VariableValueResolver {
         var value: String
         var maximumDepth: Int
         var deepestPath: [String]
+        var referencedVariableNames: Set<String>
+    }
+
+    private struct FailureCacheEntry {
+        var issues: [VariableExpansionIssue]
+        var maximumDepth: Int
+        var deepestPath: [String]
+        var referencedVariableNames: Set<String>
     }
 
     private let variablesByName: [String: Variable]
     private var resolvedCache: [String: CacheEntry] = [:]
+    private var failedCache: [String: FailureCacheEntry] = [:]
+    private(set) var maximumMaterializedUTF8Bytes = 0
+    private(set) var uncachedResolutionCount = 0
 
     init(variablesByName: [String: Variable]) {
         self.variablesByName = variablesByName
@@ -494,22 +525,43 @@ struct VariableValueResolver {
     mutating func expand(
         _ segments: [VariableTemplateSegment],
         enforceOutputLimit: Bool
-    ) -> (segments: [VariableTemplateSegment], value: String?, issues: [VariableExpansionIssue]) {
+    ) -> (
+        segments: [VariableTemplateSegment],
+        value: String?,
+        issues: [VariableExpansionIssue],
+        referencedVariableNames: Set<String>
+    ) {
         var decorated: [VariableTemplateSegment] = []
         var issues: [VariableExpansionIssue] = []
         var rendered = ""
-        var containsToken = false
+        var renderedUTF8Bytes = 0
+        var referencedVariableNames: Set<String> = []
+        let containsToken = segments.contains { segment in
+            if case .token = segment { return true }
+            return false
+        }
+        let shouldEnforceOutputLimit = enforceOutputLimit && containsToken
+        var didExceedOutputLimit = false
 
         for segment in segments {
             switch segment {
             case .text(let text, let range):
                 decorated.append(.text(text, range))
-                rendered += text
+                if !didExceedOutputLimit,
+                   !append(
+                       text,
+                       to: &rendered,
+                       utf8ByteCount: &renderedUTF8Bytes,
+                       enforceOutputLimit: shouldEnforceOutputLimit
+                   ) {
+                    didExceedOutputLimit = true
+                    issues.append(.outputTooLarge(path: [], limitBytes: Self.maximumExpandedUTF8Bytes))
+                }
             case .token(var token):
-                containsToken = true
                 guard token.status == .resolved, let name = token.name else {
                     let issue: VariableExpansionIssue
                     if token.status == .missing, let name = token.name {
+                        referencedVariableNames.insert(name)
                         issue = .missing(name: name, path: [name])
                     } else {
                         issue = .invalidSyntax(token: token.rawText, path: [])
@@ -520,11 +572,22 @@ struct VariableValueResolver {
                     continue
                 }
 
+                referencedVariableNames.insert(name)
                 let expansion = resolveVariable(named: name)
+                referencedVariableNames.formUnion(expansion.referencedVariableNames)
                 if let value = expansion.value, expansion.issues.isEmpty {
                     token.resolvedValue = value
                     token.diagnostic = nil
-                    rendered += value
+                    if !didExceedOutputLimit,
+                       !append(
+                           value,
+                           to: &rendered,
+                           utf8ByteCount: &renderedUTF8Bytes,
+                           enforceOutputLimit: shouldEnforceOutputLimit
+                       ) {
+                        didExceedOutputLimit = true
+                        issues.append(.outputTooLarge(path: [], limitBytes: Self.maximumExpandedUTF8Bytes))
+                    }
                 } else {
                     token.resolvedValue = nil
                     token.status = expansion.issues.contains(where: { $0.missingName != nil }) ? .missing : .invalid
@@ -536,13 +599,12 @@ struct VariableValueResolver {
         }
 
         issues = Self.uniqueIssues(issues)
-        if issues.isEmpty,
-           enforceOutputLimit,
-           containsToken,
-           rendered.utf8.count > Self.maximumExpandedUTF8Bytes {
-            issues.append(.outputTooLarge(path: [], limitBytes: Self.maximumExpandedUTF8Bytes))
-        }
-        return (decorated, issues.isEmpty ? rendered : nil, issues)
+        return (
+            decorated,
+            issues.isEmpty ? rendered : nil,
+            issues,
+            referencedVariableNames
+        )
     }
 
     mutating func resolveVariable(named name: String) -> VariableExpansion {
@@ -555,7 +617,8 @@ struct VariableValueResolver {
                 value: nil,
                 issues: [.cycle(path: Array(stack[cycleStart...]) + [name])],
                 maximumDepth: stack.count + 1,
-                deepestPath: stack + [name]
+                deepestPath: stack + [name],
+                referencedVariableNames: [name]
             )
         }
 
@@ -565,7 +628,8 @@ struct VariableValueResolver {
                 value: nil,
                 issues: [.depthExceeded(path: path, limit: Self.maximumDepth)],
                 maximumDepth: path.count,
-                deepestPath: path
+                deepestPath: path,
+                referencedVariableNames: [name]
             )
         }
 
@@ -577,24 +641,50 @@ struct VariableValueResolver {
                     value: nil,
                     issues: [.depthExceeded(path: path, limit: Self.maximumDepth)],
                     maximumDepth: stack.count + cached.maximumDepth,
-                    deepestPath: path
+                    deepestPath: path,
+                    referencedVariableNames: cached.referencedVariableNames
                 )
             }
             return VariableExpansion(
                 value: cached.value,
                 issues: [],
                 maximumDepth: cached.maximumDepth,
-                deepestPath: cached.deepestPath
+                deepestPath: cached.deepestPath,
+                referencedVariableNames: cached.referencedVariableNames
             )
         }
 
+        if let cached = failedCache[name],
+           cached.referencedVariableNames.isDisjoint(with: stack) {
+            if stack.count + cached.maximumDepth > Self.maximumDepth {
+                let allowedCount = max(0, Self.maximumDepth + 1 - stack.count)
+                let path = stack + Array(cached.deepestPath.prefix(allowedCount))
+                return VariableExpansion(
+                    value: nil,
+                    issues: [.depthExceeded(path: path, limit: Self.maximumDepth)],
+                    maximumDepth: stack.count + cached.maximumDepth,
+                    deepestPath: path,
+                    referencedVariableNames: cached.referencedVariableNames
+                )
+            }
+            return VariableExpansion(
+                value: nil,
+                issues: cached.issues.map { Self.prefix(stack, to: $0) },
+                maximumDepth: cached.maximumDepth,
+                deepestPath: cached.deepestPath,
+                referencedVariableNames: cached.referencedVariableNames
+            )
+        }
+
+        uncachedResolutionCount += 1
         guard let variable = variablesByName[name] else {
             let path = stack + [name]
             return VariableExpansion(
                 value: nil,
                 issues: [.missing(name: name, path: path)],
                 maximumDepth: path.count,
-                deepestPath: path
+                deepestPath: path,
+                referencedVariableNames: [name]
             )
         }
 
@@ -605,27 +695,61 @@ struct VariableValueResolver {
             mode: .execution
         )
         var rendered = ""
+        var renderedUTF8Bytes = 0
+        var didExceedOutputLimit = false
         var issues: [VariableExpansionIssue] = []
         var maximumDepth = 1
         var deepestPath = [name]
+        var referencedVariableNames: Set<String> = [name]
 
         for segment in segments {
             switch segment {
             case .text(let text, _):
-                rendered += text
+                if !didExceedOutputLimit,
+                   !append(
+                       text,
+                       to: &rendered,
+                       utf8ByteCount: &renderedUTF8Bytes,
+                       enforceOutputLimit: true
+                   ) {
+                    didExceedOutputLimit = true
+                    issues.append(.outputTooLarge(path: currentStack, limitBytes: Self.maximumExpandedUTF8Bytes))
+                }
             case .token(let token):
                 guard token.status == .resolved, let dependencyName = token.name else {
                     if token.status == .missing, let missingName = token.name {
-                        issues.append(.missing(name: missingName, path: currentStack + [missingName]))
+                        referencedVariableNames.insert(missingName)
+                        let path = currentStack + [missingName]
+                        let relativePath = Array(path.dropFirst(stack.count))
+                        if relativePath.count > maximumDepth {
+                            maximumDepth = relativePath.count
+                            deepestPath = relativePath
+                        }
+                        if path.count > Self.maximumDepth {
+                            issues.append(.depthExceeded(path: path, limit: Self.maximumDepth))
+                        } else {
+                            issues.append(.missing(name: missingName, path: path))
+                        }
                     } else {
                         issues.append(.invalidSyntax(token: token.rawText, path: currentStack))
                     }
                     continue
                 }
 
+                referencedVariableNames.insert(dependencyName)
                 let dependency = resolveVariable(named: dependencyName, stack: currentStack)
+                referencedVariableNames.formUnion(dependency.referencedVariableNames)
                 if let value = dependency.value, dependency.issues.isEmpty {
-                    rendered += value
+                    if !didExceedOutputLimit,
+                       !append(
+                           value,
+                           to: &rendered,
+                           utf8ByteCount: &renderedUTF8Bytes,
+                           enforceOutputLimit: true
+                       ) {
+                        didExceedOutputLimit = true
+                        issues.append(.outputTooLarge(path: currentStack, limitBytes: Self.maximumExpandedUTF8Bytes))
+                    }
                 } else {
                     issues.append(contentsOf: dependency.issues)
                 }
@@ -638,31 +762,155 @@ struct VariableValueResolver {
         }
 
         issues = Self.uniqueIssues(issues)
-        if issues.isEmpty, rendered.utf8.count > Self.maximumExpandedUTF8Bytes {
-            issues.append(.outputTooLarge(path: currentStack, limitBytes: Self.maximumExpandedUTF8Bytes))
-        }
         guard issues.isEmpty else {
-            return VariableExpansion(
+            let expansion = VariableExpansion(
                 value: nil,
                 issues: issues,
                 maximumDepth: maximumDepth,
-                deepestPath: deepestPath
+                deepestPath: deepestPath,
+                referencedVariableNames: referencedVariableNames
             )
+            if issues.allSatisfy(Self.isContextIndependentFailure) {
+                let relativeIssues = issues.map { Self.removingPrefix(stack, from: $0) }
+                let cacheDepth = failureCacheDepthMetadata(
+                    for: name,
+                    issues: relativeIssues,
+                    deepestPath: deepestPath
+                )
+                failedCache[name] = FailureCacheEntry(
+                    issues: relativeIssues,
+                    maximumDepth: cacheDepth.maximumDepth,
+                    deepestPath: cacheDepth.deepestPath,
+                    referencedVariableNames: referencedVariableNames
+                )
+            }
+            return expansion
         }
 
-        let entry = CacheEntry(value: rendered, maximumDepth: maximumDepth, deepestPath: deepestPath)
+        let entry = CacheEntry(
+            value: rendered,
+            maximumDepth: maximumDepth,
+            deepestPath: deepestPath,
+            referencedVariableNames: referencedVariableNames
+        )
         resolvedCache[name] = entry
         return VariableExpansion(
             value: rendered,
             issues: [],
             maximumDepth: maximumDepth,
-            deepestPath: deepestPath
+            deepestPath: deepestPath,
+            referencedVariableNames: referencedVariableNames
         )
     }
 
     private static func uniqueIssues(_ issues: [VariableExpansionIssue]) -> [VariableExpansionIssue] {
         var seen: Set<VariableExpansionIssue> = []
-        return issues.filter { seen.insert($0).inserted }
+        return issues.compactMap { issue in
+            let canonical = issue.canonicalized
+            return seen.insert(canonical).inserted ? canonical : nil
+        }
+    }
+
+    private mutating func append(
+        _ value: String,
+        to rendered: inout String,
+        utf8ByteCount: inout Int,
+        enforceOutputLimit: Bool
+    ) -> Bool {
+        let valueUTF8Bytes = value.utf8.count
+        if enforceOutputLimit,
+           valueUTF8Bytes > Self.maximumExpandedUTF8Bytes - utf8ByteCount {
+            return false
+        }
+        rendered.append(value)
+        utf8ByteCount += valueUTF8Bytes
+        maximumMaterializedUTF8Bytes = max(maximumMaterializedUTF8Bytes, utf8ByteCount)
+        return true
+    }
+
+    private static func isContextIndependentFailure(_ issue: VariableExpansionIssue) -> Bool {
+        switch issue {
+        case .missing, .invalidSyntax, .outputTooLarge:
+            return true
+        case .cycle, .depthExceeded:
+            return false
+        }
+    }
+
+    private static func prefix(
+        _ prefix: [String],
+        to issue: VariableExpansionIssue
+    ) -> VariableExpansionIssue {
+        guard !prefix.isEmpty else { return issue }
+        switch issue {
+        case .missing(let name, let path):
+            return .missing(name: name, path: prefix + path)
+        case .invalidSyntax(let token, let path):
+            return .invalidSyntax(token: token, path: prefix + path)
+        case .cycle, .depthExceeded:
+            return issue
+        case .outputTooLarge(let path, let limitBytes):
+            return .outputTooLarge(path: prefix + path, limitBytes: limitBytes)
+        }
+    }
+
+    private static func removingPrefix(
+        _ prefix: [String],
+        from issue: VariableExpansionIssue
+    ) -> VariableExpansionIssue {
+        guard !prefix.isEmpty else { return issue }
+        func relativePath(_ path: [String]) -> [String] {
+            guard path.starts(with: prefix) else { return path }
+            return Array(path.dropFirst(prefix.count))
+        }
+        switch issue {
+        case .missing(let name, let path):
+            return .missing(name: name, path: relativePath(path))
+        case .invalidSyntax(let token, let path):
+            return .invalidSyntax(token: token, path: relativePath(path))
+        case .cycle, .depthExceeded:
+            return issue
+        case .outputTooLarge(let path, let limitBytes):
+            return .outputTooLarge(path: relativePath(path), limitBytes: limitBytes)
+        }
+    }
+
+    private func failureCacheDepthMetadata(
+        for name: String,
+        issues: [VariableExpansionIssue],
+        deepestPath: [String]
+    ) -> (maximumDepth: Int, deepestPath: [String]) {
+        var candidatePaths = issues.compactMap(Self.path)
+        candidatePaths.append(deepestPath)
+
+        let relativePaths = candidatePaths.map { path -> [String] in
+            let relativePath: ArraySlice<String>
+            if let nameIndex = path.lastIndex(of: name) {
+                relativePath = path[nameIndex...]
+            } else {
+                relativePath = [name][...]
+            }
+            return Array(relativePath)
+        }
+        let longestPath = relativePaths.max { lhs, rhs in
+            if lhs.count != rhs.count {
+                return lhs.count < rhs.count
+            }
+            return lhs.lexicographicallyPrecedes(rhs, by: <)
+        }
+        let resolvedPath = longestPath?.isEmpty == false ? longestPath! : [name]
+        return (resolvedPath.count, resolvedPath)
+    }
+
+    private static func path(for issue: VariableExpansionIssue) -> [String]? {
+        switch issue {
+        case .missing(_, let path),
+             .invalidSyntax(_, let path),
+             .cycle(let path),
+             .depthExceeded(let path, _),
+             .outputTooLarge(let path, _):
+            return path
+        }
     }
 }
 
@@ -678,6 +926,7 @@ enum VariableResolver {
         let urlExpansion = resolver.expand(parsedURLSegments, enforceOutputLimit: true)
         let urlTokens = tokens(from: urlExpansion.segments)
         var expansionIssues = urlExpansion.issues
+        var referencedVariableNames = urlExpansion.referencedVariableNames
         var resolvedHeaders: [Header] = []
         var headerValueTokensByHeaderID: [UUID: [VariableToken]] = [:]
 
@@ -687,11 +936,21 @@ enum VariableResolver {
                 variablesByName: variablesByName,
                 mode: header.isEnabled ? .execution : .editing
             )
-            let valueExpansion: (segments: [VariableTemplateSegment], value: String?, issues: [VariableExpansionIssue])
+            let valueExpansion: (
+                segments: [VariableTemplateSegment],
+                value: String?,
+                issues: [VariableExpansionIssue],
+                referencedVariableNames: Set<String>
+            )
             if header.isEnabled {
                 valueExpansion = resolver.expand(parsedValueSegments, enforceOutputLimit: true)
             } else {
-                valueExpansion = (resolver.decorateForPreview(parsedValueSegments), header.value, [])
+                valueExpansion = (
+                    resolver.decorateForPreview(parsedValueSegments),
+                    header.value,
+                    [],
+                    []
+                )
             }
             let valueTokens = tokens(from: valueExpansion.segments)
             headerValueTokensByHeaderID[header.id] = valueTokens
@@ -699,6 +958,7 @@ enum VariableResolver {
             var resolvedHeader = header
             if header.isEnabled {
                 expansionIssues.append(contentsOf: valueExpansion.issues)
+                referencedVariableNames.formUnion(valueExpansion.referencedVariableNames)
 
                 let nameSegments = VariableTemplateParser.parse(
                     header.name,
@@ -723,6 +983,7 @@ enum VariableResolver {
                 resolvedRequest: nil,
                 urlTokens: urlTokens,
                 headerValueTokensByHeaderID: headerValueTokensByHeaderID,
+                referencedVariableNames: referencedVariableNames,
                 missingNames: missingNames,
                 invalidTokens: invalidTokens,
                 expansionIssues: expansionIssues,
@@ -743,6 +1004,7 @@ enum VariableResolver {
                 resolvedRequest: nil,
                 urlTokens: urlTokens,
                 headerValueTokensByHeaderID: headerValueTokensByHeaderID,
+                referencedVariableNames: referencedVariableNames,
                 missingNames: [],
                 invalidTokens: [],
                 expansionIssues: [],
@@ -754,6 +1016,7 @@ enum VariableResolver {
             resolvedRequest: resolvedRequest,
             urlTokens: urlTokens,
             headerValueTokensByHeaderID: headerValueTokensByHeaderID,
+            referencedVariableNames: referencedVariableNames,
             missingNames: [],
             invalidTokens: [],
             expansionIssues: [],
@@ -776,7 +1039,10 @@ enum VariableResolver {
 
     private static func uniqueIssues(_ issues: [VariableExpansionIssue]) -> [VariableExpansionIssue] {
         var seen: Set<VariableExpansionIssue> = []
-        return issues.filter { seen.insert($0).inserted }
+        return issues.compactMap { issue in
+            let canonical = issue.canonicalized
+            return seen.insert(canonical).inserted ? canonical : nil
+        }
     }
 
     static func missingVariablesMessage(_ names: [String]) -> String {
