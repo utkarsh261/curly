@@ -64,6 +64,14 @@ final class SessionCoordinator: ObservableObject {
         return state.requestListItems.first { $0.id == lastVisitedSavedRequestID }
     }
 
+    var canUseRequestNavigationShortcuts: Bool {
+        !state.isVariablesModalPresented && state.replaceConfirmationState == nil
+    }
+
+    var canUseLastVisitedRequestShortcut: Bool {
+        canUseRequestNavigationShortcuts && lastVisitedRequest != nil
+    }
+
     init(
         initialState: SessionState = .initial,
         curlImporter: CurlImporting = SimpleCurlImporter(),
@@ -490,12 +498,16 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func selectLastVisitedRequest() {
-        guard let targetID = lastVisitedRequest?.id else { return }
+        guard canUseRequestNavigationShortcuts,
+              let targetID = lastVisitedRequest?.id else {
+            return
+        }
         transitionToSavedRequest(id: targetID)
     }
 
     func selectVisibleRequest(at index: Int) {
-        guard (0..<9).contains(index),
+        guard canUseRequestNavigationShortcuts,
+              (0..<9).contains(index),
               state.requestListItems.indices.contains(index) else {
             return
         }

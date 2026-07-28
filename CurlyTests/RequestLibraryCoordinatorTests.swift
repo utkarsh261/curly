@@ -183,6 +183,49 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.selectedSavedRequestID, initiallySelectedID)
     }
 
+    func testKeyboardRequestNavigationIsBlockedWhileVariablesModalIsPresented() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        coordinator.updateWorkspaceName("Request A")
+        coordinator.saveCurrentRequest()
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.updateWorkspaceName("Request B")
+        coordinator.saveCurrentRequest()
+
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        let requestAIndex = try XCTUnwrap(
+            coordinator.state.requestListItems.firstIndex { $0.name == "Request A" }
+        )
+        coordinator.presentVariablesModal()
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+
+        coordinator.selectVisibleRequest(at: requestAIndex)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+    }
+
+    func testKeyboardRequestNavigationIsBlockedDuringRequestReplacementConfirmation() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        coordinator.updateWorkspaceName("Request A")
+        coordinator.saveCurrentRequest()
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.updateWorkspaceName("Request B")
+        coordinator.setURL("https://current.example.com")
+        coordinator.saveCurrentRequest()
+
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.handleURLBarPaste("curl https://replacement.example.com")
+        XCTAssertNotNil(coordinator.state.replaceConfirmationState)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+        XCTAssertNotNil(coordinator.state.replaceConfirmationState)
+    }
+
     func testRevertClearsDirtyDraftForSavedRequest() async {
         let coordinator = makeCoordinator()
         await waitUntil { coordinator.state.selectedRequestContext == .saved }

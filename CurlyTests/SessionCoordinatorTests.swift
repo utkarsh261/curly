@@ -1,8 +1,62 @@
+import AppKit
 import XCTest
 @testable import Curly
 
 @MainActor
 final class SessionCoordinatorTests: XCTestCase {
+    func testRequestNavigationEventPolicyPassesUnavailableEventsAndSuppressesRepeats() {
+        XCTAssertEqual(
+            AppLifecycleDelegate.requestNavigationAction(
+                keyCode: 48,
+                modifierFlags: .control,
+                isRepeat: false,
+                isWorkspaceWindow: true,
+                canNavigate: true
+            ),
+            .navigate
+        )
+        XCTAssertEqual(
+            AppLifecycleDelegate.requestNavigationAction(
+                keyCode: 48,
+                modifierFlags: .control,
+                isRepeat: true,
+                isWorkspaceWindow: true,
+                canNavigate: true
+            ),
+            .suppressRepeat
+        )
+        XCTAssertEqual(
+            AppLifecycleDelegate.requestNavigationAction(
+                keyCode: 48,
+                modifierFlags: .control,
+                isRepeat: false,
+                isWorkspaceWindow: true,
+                canNavigate: false
+            ),
+            .passThrough
+        )
+        XCTAssertEqual(
+            AppLifecycleDelegate.requestNavigationAction(
+                keyCode: 48,
+                modifierFlags: .control,
+                isRepeat: false,
+                isWorkspaceWindow: false,
+                canNavigate: true
+            ),
+            .passThrough
+        )
+        XCTAssertEqual(
+            AppLifecycleDelegate.requestNavigationAction(
+                keyCode: 48,
+                modifierFlags: [.control, .shift],
+                isRepeat: false,
+                isWorkspaceWindow: true,
+                canNavigate: true
+            ),
+            .passThrough
+        )
+    }
+
     func testInitialStateStartsEmptyAndIdle() {
         let coordinator = SessionCoordinator()
 

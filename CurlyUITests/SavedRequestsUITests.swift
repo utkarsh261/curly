@@ -234,6 +234,42 @@ final class SavedRequestsUITests: XCTestCase {
         assertCurrentRequest(named: "Request B", in: app)
     }
 
+    func testRequestKeyboardShortcutsDoNotNavigateBehindVariablesModal() {
+        let libraryFileURL = makeTemporaryLibraryFileURL()
+        let app = launchPersistentApp(libraryFileURL: libraryFileURL)
+        defer { app.terminate() }
+
+        createCurrentRequest(
+            name: "Request A",
+            url: "https://api.example.com/a",
+            in: app
+        )
+        app.buttons["new-request-button"].firstMatch.click()
+        createCurrentRequest(
+            name: "Request B",
+            url: "https://api.example.com/b",
+            in: app
+        )
+
+        app.menuItems["Manage Variables…"].firstMatch.click()
+        XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.waitForExistence(timeout: 3))
+
+        app.buttons["variables-request-add-button"].firstMatch.click()
+        let draftNameField = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "variable-name-field-")
+        ).firstMatch
+        XCTAssertTrue(draftNameField.waitForExistence(timeout: 3))
+        draftNameField.typeText("draft_for_request_b")
+
+        app.typeKey(.tab, modifierFlags: .control)
+        assertCurrentRequest(named: "Request B", in: app)
+        XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.exists)
+
+        app.typeKey("2", modifierFlags: .control)
+        assertCurrentRequest(named: "Request B", in: app)
+        XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.exists)
+    }
+
     private func launchPersistentApp(libraryFileURL: URL) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
