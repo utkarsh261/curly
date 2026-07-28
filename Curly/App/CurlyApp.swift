@@ -104,6 +104,21 @@ private struct TLSVerificationSettingsView: View {
 
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
     var coordinatorProvider: (() -> SessionCoordinator?)?
+    private var requestNavigationEventMonitor: Any?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        requestNavigationEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            guard event.keyCode == 48, modifiers == .control else {
+                return event
+            }
+
+            Task { @MainActor [weak self] in
+                self?.coordinatorProvider?()?.selectLastVisitedRequest()
+            }
+            return nil
+        }
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let coordinator = coordinatorProvider?() else {
@@ -115,6 +130,13 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let requestNavigationEventMonitor {
+            NSEvent.removeMonitor(requestNavigationEventMonitor)
+        }
+        requestNavigationEventMonitor = nil
     }
 }
 
@@ -382,6 +404,26 @@ struct WorkspaceCommands: Commands {
 
             Divider()
 
+            Button(lastVisitedRequestTitle) {
+                coordinator.selectLastVisitedRequest()
+            }
+            .keyboardShortcut(.tab, modifiers: [.control])
+            .disabled(coordinator.lastVisitedRequest == nil)
+            .accessibilityIdentifier("last-visited-request-command")
+
+            ForEach(Array(coordinator.state.requestListItems.prefix(9).enumerated()), id: \.element.id) { index, item in
+                Button("\(index + 1) — \(item.name)") {
+                    coordinator.selectVisibleRequest(at: index)
+                }
+                .keyboardShortcut(
+                    KeyEquivalent(Character("\(index + 1)")),
+                    modifiers: [.control]
+                )
+                .accessibilityIdentifier("select-request-\(index + 1)-command")
+            }
+
+            Divider()
+
             Button("Open Main Window") {
                 coordinator.requestWindowOpen()
                 if let lastID = coordinator.globalLastExecutedRequestID {
@@ -396,5 +438,12 @@ struct WorkspaceCommands: Commands {
             }
             .keyboardShortcut("0", modifiers: [.command])
         }
+    }
+
+    private var lastVisitedRequestTitle: String {
+        guard let request = coordinator.lastVisitedRequest else {
+            return "Last Visited Request"
+        }
+        return "Last Visited — \(request.name)"
     }
 }

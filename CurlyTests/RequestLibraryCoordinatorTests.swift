@@ -57,6 +57,132 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/b-draft")
     }
 
+    func testLastVisitedRequestTogglesBetweenTheCurrentAndPreviousRequest() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let requestAID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.updateWorkspaceName("Request A")
+        coordinator.saveCurrentRequest()
+
+        coordinator.createOrFocusHiddenNewDraft()
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.updateWorkspaceName("Request B")
+        coordinator.saveCurrentRequest()
+
+        coordinator.createOrFocusHiddenNewDraft()
+        let requestCID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.updateWorkspaceName("Request C")
+        coordinator.saveCurrentRequest()
+
+        XCTAssertNotEqual(requestAID, requestBID)
+        XCTAssertNotEqual(requestBID, requestCID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestBID)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestCID)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestCID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestBID)
+    }
+
+    func testVisibleRequestIndexSelectionUsesCurrentSidebarOrderAndRejectsInvalidIndexes() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        coordinator.updateWorkspaceName("Request A")
+        coordinator.saveCurrentRequest()
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.updateWorkspaceName("Request B")
+        coordinator.saveCurrentRequest()
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.updateWorkspaceName("Request C")
+        coordinator.saveCurrentRequest()
+
+        let orderedIDs = coordinator.state.requestListItems.map(\.id)
+        XCTAssertEqual(orderedIDs.count, 3)
+
+        coordinator.selectVisibleRequest(at: 2)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, orderedIDs[2])
+
+        coordinator.selectVisibleRequest(at: 0)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, orderedIDs[0])
+
+        coordinator.selectVisibleRequest(at: -1)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, orderedIDs[0])
+
+        coordinator.selectVisibleRequest(at: 3)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, orderedIDs[0])
+    }
+
+    func testVisibleRequestIndexSelectionIsLimitedToNineShortcuts() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        for _ in 0..<9 {
+            coordinator.createOrFocusHiddenNewDraft()
+        }
+        XCTAssertEqual(coordinator.state.requestListItems.count, 10)
+
+        let selectedID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.selectVisibleRequest(at: 9)
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, selectedID)
+
+        coordinator.selectVisibleRequest(at: 8)
+        XCTAssertEqual(
+            coordinator.state.selectedSavedRequestID,
+            coordinator.state.requestListItems[8].id
+        )
+    }
+
+    func testReselectingCurrentRequestDoesNotReplaceLastVisitedRequest() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let requestAID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.createOrFocusHiddenNewDraft()
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+
+        coordinator.selectSavedRequest(id: requestBID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestAID)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestAID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestBID)
+    }
+
+    func testDeletingLastVisitedRequestPrunesNavigationTarget() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let requestAID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.createOrFocusHiddenNewDraft()
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, requestAID)
+
+        coordinator.deleteSavedRequest(id: requestAID)
+        await waitUntil { coordinator.state.requestListItems.count == 1 }
+
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+        XCTAssertNil(coordinator.lastVisitedRequest)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+    }
+
+    func testInitialSelectionDoesNotCreateLastVisitedRequest() async {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let initiallySelectedID = coordinator.state.selectedSavedRequestID
+        XCTAssertNil(coordinator.lastVisitedRequest)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, initiallySelectedID)
+    }
+
     func testRevertClearsDirtyDraftForSavedRequest() async {
         let coordinator = makeCoordinator()
         await waitUntil { coordinator.state.selectedRequestContext == .saved }
@@ -145,6 +271,26 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
         XCTAssertEqual(coordinator.state.selectedRequestContext, .saved)
+        XCTAssertNil(coordinator.lastVisitedRequest)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestBID)
+    }
+
+    func testDuplicateBecomesCurrentAndRecordsItsSourceAsLastVisited() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let sourceID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.duplicateSelectedRequest()
+        let duplicateID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+
+        XCTAssertNotEqual(duplicateID, sourceID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, sourceID)
+
+        coordinator.selectLastVisitedRequest()
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, sourceID)
+        XCTAssertEqual(coordinator.lastVisitedRequest?.id, duplicateID)
     }
 
     func testFileBackedPersistenceRestoresSavedRequestAndDraftAcrossCoordinatorRelaunch() async throws {
@@ -217,6 +363,7 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(relaunchedCoordinator.state.selectedSavedRequestID, firstID)
         XCTAssertEqual(relaunchedCoordinator.state.workspaceName, "First")
         XCTAssertEqual(relaunchedCoordinator.state.workspaceRequest.urlString, "https://api.example.com/first")
+        XCTAssertNil(relaunchedCoordinator.lastVisitedRequest)
     }
 
     func testFileBackedPersistenceRestoresCollapsedLibraryAcrossCoordinatorRelaunch() async throws {
