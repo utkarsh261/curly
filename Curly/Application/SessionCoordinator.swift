@@ -36,6 +36,7 @@ final class SessionCoordinator: ObservableObject {
     private var hiddenNewDraft: HiddenNewDraft?
     private var selectedContext: SelectionContext = .hiddenNewDraft
     private var selectedSavedRequestID: UUID?
+    private var lastVisitedSavedRequestID: UUID?
     private var draftRunSummaryForHiddenContext: ExecutionSummary?
     private var didCompleteInitialLibraryLoad = false
     private var pendingPersistenceTasks: [UUID: Task<Void, Never>] = [:]
@@ -53,6 +54,22 @@ final class SessionCoordinator: ObservableObject {
 
     var hasCompletedInitialLibraryLoad: Bool {
         requestLibrary == nil || didCompleteInitialLibraryLoad
+    }
+
+    var lastVisitedRequest: RequestListItem? {
+        guard let lastVisitedSavedRequestID,
+              lastVisitedSavedRequestID != selectedSavedRequestID else {
+            return nil
+        }
+        return state.requestListItems.first { $0.id == lastVisitedSavedRequestID }
+    }
+
+    var canUseRequestNavigationShortcuts: Bool {
+        !state.isVariablesModalPresented && state.replaceConfirmationState == nil
+    }
+
+    var canUseLastVisitedRequestShortcut: Bool {
+        canUseRequestNavigationShortcuts && lastVisitedRequest != nil
     }
 
     init(
@@ -457,10 +474,7 @@ final class SessionCoordinator: ObservableObject {
             newWorkspace()
             return
         }
-        
-        cancelActiveRun()
-        cacheCurrentResponseState()
-        
+
         let newID = UUID()
         let newRequest = SavedRequest(
             id: newID,
@@ -475,35 +489,29 @@ final class SessionCoordinator: ObservableObject {
         enqueuePersistenceTask(errorPrefix: "Failed to create new request") {
             try await requestLibrary.savedRequests.upsert(newRequest)
         }
-        
-        selectedContext = .saved
-        selectedSavedRequestID = newID
-        applySelectedRequestSnapshot()
-        loadCachedResponseState(for: newID)
-        validateCurrentPostResponseScript()
-        
-        persistSelectionState()
-        refreshRequestListPresentation()
+
+        transitionToSavedRequest(id: newID)
     }
 
     func selectSavedRequest(id: UUID) {
-        guard requestLibrary != nil else {
+        transitionToSavedRequest(id: id)
+    }
+
+    func selectLastVisitedRequest() {
+        guard canUseRequestNavigationShortcuts,
+              let targetID = lastVisitedRequest?.id else {
             return
         }
-        guard savedRequestsByID[id] != nil else { return }
-        guard selectedContext != .saved || selectedSavedRequestID != id else { return }
-        
-        cancelActiveRun()
-        cacheCurrentResponseState()
-        
-        selectedContext = .saved
-        selectedSavedRequestID = id
-        applySelectedRequestSnapshot()
-        loadCachedResponseState(for: id)
-        validateCurrentPostResponseScript()
-        
-        persistSelectionState()
-        refreshRequestListPresentation()
+        transitionToSavedRequest(id: targetID)
+    }
+
+    func selectVisibleRequest(at index: Int) {
+        guard canUseRequestNavigationShortcuts,
+              (0..<9).contains(index),
+              state.requestListItems.indices.contains(index) else {
+            return
+        }
+        transitionToSavedRequest(id: state.requestListItems[index].id)
     }
 
     func saveCurrentRequest() {
@@ -547,6 +555,7 @@ final class SessionCoordinator: ObservableObject {
             )
             savedRequestsByID[newSaved.id] = newSaved
             hiddenNewDraft = nil
+            lastVisitedSavedRequestID = nil
             selectedContext = .saved
             selectedSavedRequestID = newSaved.id
             state.workspaceName = newSaved.name
@@ -587,6 +596,7 @@ final class SessionCoordinator: ObservableObject {
 
     func deleteSavedRequest(id: UUID) {
         guard let requestLibrary else { return }
+        let wasSelected = selectedSavedRequestID == id
         if selectedSavedRequestID == id || globalLastExecutedRequestID == id {
             cancelActiveRun()
         }
@@ -594,7 +604,10 @@ final class SessionCoordinator: ObservableObject {
         draftsByRequestID[id] = nil
         summariesByRequestID[id] = nil
         executionStatesByRequestID[id] = nil
-        if selectedSavedRequestID == id {
+        if lastVisitedSavedRequestID == id || wasSelected {
+            lastVisitedSavedRequestID = nil
+        }
+        if wasSelected {
             selectedSavedRequestID = nil
             selectNextContextAfterDelete()
         }
@@ -646,7 +659,6 @@ final class SessionCoordinator: ObservableObject {
 
     private func duplicateSavedRequest(snapshot source: EditableRequestSnapshot) {
         guard let requestLibrary else { return }
-        cacheCurrentResponseState()
         let now = Date()
         let duplicate = SavedRequest(
             id: UUID(),
@@ -659,18 +671,10 @@ final class SessionCoordinator: ObservableObject {
             automation: source.automation
         )
         savedRequestsByID[duplicate.id] = duplicate
-        selectedSavedRequestID = duplicate.id
-        selectedContext = .saved
-        state.workspaceRequest = duplicate.request
-        state.workspaceName = duplicate.name
-        state.requestAutomation = duplicate.automation
-        state.postResponseScriptState = duplicate.automation.postResponseScript.isEnabled ? .ready : .off
-        validateCurrentPostResponseScript()
         enqueuePersistenceTask(errorPrefix: "Failed to duplicate request") {
             try await requestLibrary.savedRequests.upsert(duplicate)
         }
-        refreshRequestListPresentation()
-        persistSelectionState()
+        transitionToSavedRequest(id: duplicate.id)
     }
 
     func exportVisibleResponseBody() {
@@ -1602,15 +1606,32 @@ final class SessionCoordinator: ObservableObject {
     private func selectNextContextAfterDelete() {
         let orderedIDs = savedRequestsByID.values.sorted { $0.lastEditedAt > $1.lastEditedAt }.map(\.id)
         if let next = orderedIDs.first {
-            selectedContext = .saved
-            selectedSavedRequestID = next
-            applySelectedRequestSnapshot()
-            loadCachedResponseState(for: next)
-            validateCurrentPostResponseScript()
-            persistSelectionState()
+            transitionToSavedRequest(id: next)
             return
         }
         createOrFocusHiddenNewDraft()
+    }
+
+    private func transitionToSavedRequest(id: UUID) {
+        guard requestLibrary != nil,
+              savedRequestsByID[id] != nil,
+              selectedContext != .saved || selectedSavedRequestID != id else {
+            return
+        }
+
+        let departingRequestID = selectedContext == .saved ? selectedSavedRequestID : nil
+        cancelActiveRun()
+        cacheCurrentResponseState()
+
+        selectedContext = .saved
+        selectedSavedRequestID = id
+        lastVisitedSavedRequestID = departingRequestID
+        applySelectedRequestSnapshot()
+        loadCachedResponseState(for: id)
+        validateCurrentPostResponseScript()
+
+        persistSelectionState()
+        refreshRequestListPresentation()
     }
 
     private func refreshRequestListPresentation() {

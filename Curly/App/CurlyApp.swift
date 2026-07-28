@@ -19,6 +19,7 @@ struct CurlyApp: App {
         WindowGroup(id: "main") {
             WorkspaceRootView()
                 .environmentObject(coordinator)
+                .background(WorkspaceWindowMarker())
                 .onAppear {
                     coordinator.setWindowVisible(true)
 #if DEBUG
@@ -103,7 +104,59 @@ private struct TLSVerificationSettingsView: View {
 }
 
 final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    enum RequestNavigationKeyEventAction: Equatable {
+        case passThrough
+        case navigate
+        case suppressRepeat
+    }
+
     var coordinatorProvider: (() -> SessionCoordinator?)?
+    private var requestNavigationEventMonitor: Any?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        requestNavigationEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            let canNavigate = MainActor.assumeIsolated {
+                self.coordinatorProvider?()?.canUseLastVisitedRequestShortcut == true
+            }
+            let action = Self.requestNavigationAction(
+                keyCode: event.keyCode,
+                modifierFlags: event.modifierFlags,
+                isRepeat: event.isARepeat,
+                isWorkspaceWindow: event.window?.containsWorkspaceWindowMarker == true,
+                canNavigate: canNavigate
+            )
+
+            switch action {
+            case .passThrough:
+                return event
+            case .suppressRepeat:
+                return nil
+            case .navigate:
+                MainActor.assumeIsolated {
+                    self.coordinatorProvider?()?.selectLastVisitedRequest()
+                }
+                return nil
+            }
+        }
+    }
+
+    static func requestNavigationAction(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags,
+        isRepeat: Bool,
+        isWorkspaceWindow: Bool,
+        canNavigate: Bool
+    ) -> RequestNavigationKeyEventAction {
+        let modifiers = modifierFlags.intersection([.command, .control, .option, .shift])
+        guard keyCode == 48,
+              modifiers == .control,
+              isWorkspaceWindow,
+              canNavigate else {
+            return .passThrough
+        }
+        return isRepeat ? .suppressRepeat : .navigate
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let coordinator = coordinatorProvider?() else {
@@ -115,6 +168,38 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let requestNavigationEventMonitor {
+            NSEvent.removeMonitor(requestNavigationEventMonitor)
+        }
+        requestNavigationEventMonitor = nil
+    }
+}
+
+private struct WorkspaceWindowMarker: NSViewRepresentable {
+    func makeNSView(context: Context) -> WorkspaceWindowMarkerView {
+        WorkspaceWindowMarkerView()
+    }
+
+    func updateNSView(_ nsView: WorkspaceWindowMarkerView, context: Context) {}
+}
+
+private final class WorkspaceWindowMarkerView: NSView {}
+
+private extension NSWindow {
+    var containsWorkspaceWindowMarker: Bool {
+        contentView?.containsWorkspaceWindowMarker == true
+    }
+}
+
+private extension NSView {
+    var containsWorkspaceWindowMarker: Bool {
+        if self is WorkspaceWindowMarkerView {
+            return true
+        }
+        return subviews.contains { $0.containsWorkspaceWindowMarker }
     }
 }
 
@@ -382,6 +467,27 @@ struct WorkspaceCommands: Commands {
 
             Divider()
 
+            Button(lastVisitedRequestTitle) {
+                coordinator.selectLastVisitedRequest()
+            }
+            .keyboardShortcut(.tab, modifiers: [.control])
+            .disabled(!coordinator.canUseLastVisitedRequestShortcut)
+            .accessibilityIdentifier("last-visited-request-command")
+
+            ForEach(Array(coordinator.state.requestListItems.prefix(9).enumerated()), id: \.element.id) { index, item in
+                Button("\(index + 1) — \(item.name)") {
+                    coordinator.selectVisibleRequest(at: index)
+                }
+                .keyboardShortcut(
+                    KeyEquivalent(Character("\(index + 1)")),
+                    modifiers: [.control]
+                )
+                .disabled(!coordinator.canUseRequestNavigationShortcuts)
+                .accessibilityIdentifier("select-request-\(index + 1)-command")
+            }
+
+            Divider()
+
             Button("Open Main Window") {
                 coordinator.requestWindowOpen()
                 if let lastID = coordinator.globalLastExecutedRequestID {
@@ -396,5 +502,12 @@ struct WorkspaceCommands: Commands {
             }
             .keyboardShortcut("0", modifiers: [.command])
         }
+    }
+
+    private var lastVisitedRequestTitle: String {
+        guard let request = coordinator.lastVisitedRequest else {
+            return "Last Visited Request"
+        }
+        return "Last Visited — \(request.name)"
     }
 }
