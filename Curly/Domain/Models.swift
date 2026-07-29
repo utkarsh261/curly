@@ -1218,6 +1218,17 @@ struct LastExecutedRequest: Equatable {
     var request: Request
 }
 
+enum CurlPreviewContent: Equatable {
+    case loading
+    case command(String)
+    case error(String)
+}
+
+struct CurlPreviewState: Equatable {
+    var id: UUID
+    var content: CurlPreviewContent
+}
+
 struct ExecutedResponse: Equatable {
     var request: Request
     var statusCode: Int
@@ -1357,6 +1368,7 @@ struct SessionState: Equatable {
     var requestEditorExpansion: RequestEditorExpansionState
     var variables: [Variable]
     var isVariablesModalPresented: Bool
+    var curlPreviewState: CurlPreviewState?
 
     init(
         workspaceRequest: Request,
@@ -1381,7 +1393,8 @@ struct SessionState: Equatable {
         isWindowVisible: Bool,
         requestEditorExpansion: RequestEditorExpansionState = .allExpanded,
         variables: [Variable] = [],
-        isVariablesModalPresented: Bool = false
+        isVariablesModalPresented: Bool = false,
+        curlPreviewState: CurlPreviewState? = nil
     ) {
         self.workspaceRequest = workspaceRequest
         self.workspaceName = workspaceName
@@ -1405,6 +1418,7 @@ struct SessionState: Equatable {
         self.requestEditorExpansion = requestEditorExpansion
         self.variables = variables
         self.isVariablesModalPresented = isVariablesModalPresented
+        self.curlPreviewState = curlPreviewState
     }
 
     static let initial = SessionState(
@@ -1428,7 +1442,8 @@ struct SessionState: Equatable {
         isWindowVisible: true,
         requestEditorExpansion: .allExpanded,
         variables: [],
-        isVariablesModalPresented: false
+        isVariablesModalPresented: false,
+        curlPreviewState: nil
     )
 
     var requestIssueMessage: String? {

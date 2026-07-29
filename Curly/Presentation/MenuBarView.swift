@@ -62,6 +62,7 @@ struct MenuBarView: View {
             Button("Clear Workspace") {
                 coordinator.newWorkspace()
             }
+            .disabled(coordinator.state.curlPreviewState != nil)
             .accessibilityIdentifier("new-workspace-menu-button")
 
             Divider()

@@ -24,6 +24,168 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Request Issue"].exists, "A valid cURL import should not show a request issue.")
     }
 
+    func testCanonicalCurlRunsAndCopiesBackExactlyFromGeneratedCurlModal() throws {
+        let canonicalCurl = """
+        curl --location \\
+          --url 'http://localhost:9999/json'
+        """
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(canonicalCurl, into: urlField)
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            urlField.value as? String == "http://localhost:9999/json"
+        }, "Expected canonical cURL import, got \(String(describing: urlField.value)).")
+
+        app.buttons["run-button"].firstMatch.click()
+        XCTAssertTrue(
+            waitUntil(timeout: 5) {
+                self.text(of: app.staticTexts["response-status-value"].firstMatch) == "200"
+            },
+            "The imported canonical cURL should execute successfully."
+        )
+
+        let generatedCurlButton = app.buttons["view-generated-curl-button"].firstMatch
+        XCTAssertTrue(generatedCurlButton.waitForExistence(timeout: 3))
+        generatedCurlButton.click()
+        XCTAssertTrue(app.otherElements["generated-curl-modal-backdrop"].firstMatch.waitForExistence(timeout: 3))
+        let generatedCurlText = app.staticTexts["generated-curl-text"].firstMatch
+        XCTAssertTrue(generatedCurlText.waitForExistence(timeout: 3))
+        XCTAssertEqual(text(of: generatedCurlText), canonicalCurl)
+        let closeButton = app.buttons["generated-curl-modal-close-button"].firstMatch
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3))
+        XCTAssertLessThan(
+            generatedCurlText.frame.minY - closeButton.frame.maxY,
+            100,
+            "Short generated commands should stay near the top of a content-sized modal."
+        )
+
+        NSPasteboard.general.clearContents()
+        app.buttons["copy-generated-curl-button"].firstMatch.click()
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            NSPasteboard.general.string(forType: .string) == canonicalCurl
+        })
+        XCTAssertTrue(app.otherElements["generated-curl-modal-backdrop"].firstMatch.exists)
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            app.buttons["copy-generated-curl-button"].firstMatch.label == "Copied"
+        })
+
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertFalse(app.otherElements["generated-curl-modal-backdrop"].firstMatch.exists)
+    }
+
+    func testNestedVariableCurlRunsAndCopiesResolvedCanonicalCommand() throws {
+        let importedCurl = """
+        curl --location --url '{{base_url}}/post' --header 'Authorization: {{authorization}}' --header 'Content-Type: application/json' --data-raw '{"literal":"{{token}}"}'
+        """
+        let resolvedCurl = """
+        curl --location \\
+          --url 'http://127.0.0.1:9999/post' \\
+          --header 'Authorization: Bearer abc123' \\
+          --header 'Content-Type: application/json' \\
+          --data-raw '{"literal":"{{token}}"}'
+        """
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+
+        openVariables(in: app)
+        createGlobalVariable(name: "host", value: "127.0.0.1", in: app)
+        createGlobalVariable(name: "base_url", value: "http://{{host}}:9999", in: app)
+        createGlobalVariable(name: "token", value: "abc123", in: app)
+        createGlobalVariable(name: "authorization", value: "Bearer {{token}}", in: app)
+        app.typeKey(.escape, modifierFlags: [])
+
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste(importedCurl, into: urlField)
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            urlField.value as? String == "{{base_url}}/post"
+        }, "Expected variable cURL import, got \(String(describing: urlField.value)).")
+
+        app.buttons["run-button"].firstMatch.click()
+        XCTAssertTrue(
+            waitUntil(timeout: 5) {
+                self.text(of: app.staticTexts["response-status-value"].firstMatch) == "200"
+            },
+            "The imported variable cURL should execute successfully."
+        )
+
+        app.buttons["view-generated-curl-button"].firstMatch.click()
+        XCTAssertTrue(app.otherElements["generated-curl-modal-backdrop"].firstMatch.waitForExistence(timeout: 3))
+        let generatedCurlText = app.staticTexts["generated-curl-text"].firstMatch
+        XCTAssertTrue(generatedCurlText.waitForExistence(timeout: 3))
+        XCTAssertEqual(text(of: generatedCurlText), resolvedCurl)
+
+        NSPasteboard.general.clearContents()
+        app.buttons["copy-generated-curl-button"].firstMatch.click()
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            NSPasteboard.general.string(forType: .string) == resolvedCurl
+        })
+    }
+
+    func testGeneratedCurlValidationErrorHasNoCopyActionAndKeepsDraft() {
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+        let urlField = app.textFields["url-input-field"].firstMatch
+        paste("https://{{missing}}/users", into: urlField)
+
+        app.buttons["view-generated-curl-button"].firstMatch.click()
+
+        let error = app.staticTexts["generated-curl-error"].firstMatch
+        XCTAssertTrue(error.waitForExistence(timeout: 3))
+        XCTAssertTrue(text(of: error).contains("Define missing"))
+        XCTAssertFalse(app.buttons["copy-generated-curl-button"].firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(urlField.waitForExistence(timeout: 2))
+        XCTAssertEqual(urlField.value as? String, "https://{{missing}}/users")
+    }
+
+    func testLongGeneratedCurlUsesContentSizedModalWithoutBlankVerticalSpace() {
+        let curl = """
+        curl --location \\
+          --url 'http://localhost:9999/post?a=tkt=ticket_1' \\
+          --header 'Auth: Bearer token = tkt=ticket_1' \\
+          --header 'Content-Type: application/json' \\
+          --data-raw '{
+          "string" : "this is a string",
+          "title" : "hello",
+          "count" : 42,
+          "list" : [
+            "hey",
+            213
+          ]
+        }'
+        """
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+        paste(curl, into: app.textFields["url-input-field"].firstMatch)
+
+        app.buttons["view-generated-curl-button"].firstMatch.click()
+        let commandText = app.staticTexts["generated-curl-text"].firstMatch
+        XCTAssertTrue(commandText.waitForExistence(timeout: 3))
+        let commandScrollView = app.scrollViews["generated-curl-command-scroll-view"].firstMatch
+        let modalCloseButton = app.buttons["generated-curl-modal-close-button"].firstMatch
+        let footerCopyButton = app.buttons["copy-generated-curl-button"].firstMatch
+        XCTAssertTrue(commandScrollView.waitForExistence(timeout: 3))
+        XCTAssertTrue(modalCloseButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(footerCopyButton.waitForExistence(timeout: 3))
+
+        XCTAssertLessThan(
+            commandScrollView.frame.width,
+            620,
+            "The generated cURL modal should fit its content instead of keeping the old 780-point width."
+        )
+        XCTAssertLessThan(
+            commandText.frame.minY - modalCloseButton.frame.maxY,
+            100,
+            "The command should be pinned near the top of its code area."
+        )
+        XCTAssertLessThan(
+            footerCopyButton.frame.minY - commandText.frame.maxY,
+            60,
+            "The modal should not leave a large blank region below a fully visible command."
+        )
+    }
+
     func testRealPasteSimpleCurlParsesURLAndEnablesRun() throws {
         let app = launchEmptyApp()
         defer { app.terminate() }
@@ -201,7 +363,7 @@ final class URLBarImportUITests: XCTestCase {
         )
     }
 
-    func testLocationCurlImportsWithWarningAndRunEnabled() throws {
+    func testLocationCurlImportsWithoutWarningAndRunEnabled() throws {
         let (app, urlField) = launchWithURLBarInput("curl --location https://www.example.com")
 
         XCTAssertTrue(
@@ -211,8 +373,7 @@ final class URLBarImportUITests: XCTestCase {
             "Pasting a --location cURL should populate the parsed URL."
         )
 
-        XCTAssertTrue(app.staticTexts["Request Warning"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Redirect-following from `--location` is not represented yet."].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.staticTexts["Request Warning"].exists)
         XCTAssertTrue(app.buttons["run-button"].firstMatch.isEnabled)
     }
 
@@ -566,13 +727,51 @@ final class URLBarImportUITests: XCTestCase {
     }
 
     private func paste(_ text: String, into element: XCUIElement) {
-        XCTAssertTrue(element.waitForExistence(timeout: 2), "Expected URL field to exist before typing.")
+        XCTAssertTrue(element.waitForExistence(timeout: 2), "Expected the target field to exist before pasting.")
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         XCTAssertTrue(pasteboard.setString(text, forType: .string), "Expected to prepare the cURL clipboard payload.")
         element.click()
         element.typeKey("a", modifierFlags: .command)
         element.typeKey("v", modifierFlags: .command)
+    }
+
+    private func openVariables(in app: XCUIApplication) {
+        let menuItem = app.menuItems["Manage Variables…"].firstMatch
+        XCTAssertTrue(menuItem.waitForExistence(timeout: 3))
+        menuItem.click()
+        XCTAssertTrue(app.staticTexts["Variables"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    private func createGlobalVariable(name: String, value: String, in app: XCUIApplication) {
+        let addButton = app.buttons["Add Global Variable"].firstMatch
+        XCTAssertTrue(addButton.waitForExistence(timeout: 3))
+        let nameFields = app.textFields.matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", "variable-name-field-")
+        )
+        let existingIdentifiers = Set(nameFields.allElementsBoundByIndex.map(\.identifier))
+        addButton.click()
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            nameFields.allElementsBoundByIndex.contains { !existingIdentifiers.contains($0.identifier) }
+        })
+        guard let nameField = nameFields.allElementsBoundByIndex.first(where: {
+            !existingIdentifiers.contains($0.identifier)
+        }) else {
+            return XCTFail("Expected a variable draft.")
+        }
+        let valueField = app.textFields[
+            nameField.identifier.replacingOccurrences(
+                of: "variable-name-field-",
+                with: "variable-value-field-"
+            )
+        ].firstMatch
+        paste(name, into: nameField)
+        paste(value, into: valueField)
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertTrue(
+            app.textFields.matching(NSPredicate(format: "value == %@", name)).firstMatch
+                .waitForExistence(timeout: 3)
+        )
     }
 
     private func replaceFocusedText(_ text: String, app: XCUIApplication) {

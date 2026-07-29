@@ -262,12 +262,16 @@ final class SavedRequestsUITests: XCTestCase {
         draftNameField.typeText("draft_for_request_b")
 
         app.typeKey(.tab, modifierFlags: .control)
-        assertCurrentRequest(named: "Request B", in: app)
         XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
+        assertCurrentRequest(named: "Request B", in: app)
 
+        app.menuItems["Manage Variables…"].firstMatch.click()
+        XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.waitForExistence(timeout: 3))
         app.typeKey("2", modifierFlags: .control)
-        assertCurrentRequest(named: "Request B", in: app)
         XCTAssertTrue(app.otherElements["variables-modal-overlay"].firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
+        assertCurrentRequest(named: "Request B", in: app)
     }
 
     private func launchPersistentApp(libraryFileURL: URL) -> XCUIApplication {

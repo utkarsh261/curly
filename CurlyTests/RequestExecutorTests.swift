@@ -2,6 +2,320 @@ import XCTest
 @testable import Curly
 
 final class RequestExecutorTests: XCTestCase {
+    func testPreparedRequestRendersTheSameFinalJSONBodyAndHeadersSentByExecutor() async throws {
+        let transport = StubTransport(
+            result: .success((Data(), makeHTTPResponse(statusCode: 200, headers: [:])))
+        )
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false })
+        let renderer = DefaultCurlCommandRenderer()
+        let request = Request(
+            method: .post,
+            urlString: "http://localhost:9999/post?name=John Doe",
+            headers: [
+                Header(name: "X-Zeta", value: "last"),
+                Header(name: "Content-Type", value: "application/json"),
+                Header(name: "x-alpha", value: "first"),
+                Header(name: "X-Disabled", value: "ignored", isEnabled: false)
+            ],
+            body: .text(
+                """
+                {
+                  // local note
+                  "name": "O'Brien"
+                }
+                """
+            )
+        )
+        let prepared = try preparer.prepare(request)
+        let executor = URLSessionRequestExecutor(transport: transport)
+
+        _ = try await executor.execute(prepared)
+
+        let command = renderer.render(prepared)
+        let strippedBody = "{\n  \n  \"name\": \"O'Brien\"\n}"
+        XCTAssertEqual(
+            command,
+            """
+            curl --location \\
+              --url 'http://localhost:9999/post?name=John%20Doe' \\
+              --header 'Content-Type: application/json' \\
+              --header 'x-alpha: first' \\
+              --header 'X-Zeta: last' \\
+              --data-raw '\(strippedBody.replacingOccurrences(of: "'", with: "'\\''"))'
+            """
+        )
+        let capturedRequest = await transport.capturedRequest
+        let sent = try XCTUnwrap(capturedRequest)
+        XCTAssertEqual(sent, prepared.urlRequest)
+        XCTAssertEqual(sent.httpBody, prepared.bodyData)
+    }
+
+    func testPreparationUsesLastDuplicateHeaderForBodyHandlingAndGeneratedCurl() throws {
+        let request = Request(
+            method: .post,
+            urlString: "https://example.com",
+            headers: [
+                Header(name: "Content-Type", value: "application/json"),
+                Header(name: "content-type", value: "text/plain")
+            ],
+            body: .text("// keep this comment")
+        )
+
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(request)
+
+        XCTAssertEqual(
+            prepared.headers,
+            [PreparedHTTPHeader(name: "content-type", value: "text/plain")]
+        )
+        XCTAssertEqual(prepared.bodyData, Data("// keep this comment".utf8))
+        XCTAssertTrue(
+            DefaultCurlCommandRenderer().render(prepared)
+                .contains("--header 'content-type: text/plain'")
+        )
+    }
+
+    func testRendererUsesMethodAwareFlagsAndEffectiveTLSPolicy() throws {
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { true })
+        let renderer = DefaultCurlCommandRenderer()
+
+        let get = try preparer.prepare(
+            Request(method: .get, urlString: "https://localhost:9443/json", headers: [], body: .none)
+        )
+        XCTAssertEqual(
+            renderer.render(get),
+            """
+            curl \\
+              --insecure \\
+              --url 'https://localhost:9443/json'
+            """
+        )
+
+        let explicitlyInsecure = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .get,
+                urlString: "https://example.com",
+                headers: [],
+                body: .none,
+                tlsCertificateVerification: .disabled
+            )
+        )
+        XCTAssertEqual(
+            renderer.render(explicitlyInsecure),
+            """
+            curl --location \\
+              --insecure \\
+              --url 'https://example.com'
+            """
+        )
+
+        let head = try preparer.prepare(
+            Request(method: .head, urlString: "https://example.com", headers: [], body: .none)
+        )
+        XCTAssertEqual(
+            renderer.render(head),
+            """
+            curl --location \\
+              --head \\
+              --url 'https://example.com'
+            """
+        )
+
+        let delete = try preparer.prepare(
+            Request(method: .delete, urlString: "https://example.com/items/1", headers: [], body: .text(""))
+        )
+        XCTAssertEqual(
+            renderer.render(delete),
+            """
+            curl --location \\
+              --request DELETE \\
+              --url 'https://example.com/items/1' \\
+              --header 'Content-Type:' \\
+              --data-raw ''
+            """
+        )
+    }
+
+    func testNonEmptyPostWithoutExplicitContentTypeKeepsCurlAndURLSessionDefaultsAligned() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .post,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("payload")
+            )
+        )
+
+        let command = DefaultCurlCommandRenderer().render(prepared)
+
+        XCTAssertFalse(command.contains("--header 'Content-Type:'"))
+        XCTAssertTrue(command.contains("--data-raw 'payload'"))
+    }
+
+    func testNonEmptyPostWithoutExplicitContentTypeExecutesWithSameFormTypeInAppAndCurl() async throws {
+        let request = Request(
+            method: .post,
+            urlString: "http://localhost:9999/post",
+            headers: [],
+            body: .text("name=curly")
+        )
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(request)
+
+        let appResponse = try await URLSessionRequestExecutor().execute(prepared)
+        let appBody = String(decoding: appResponse.bodyData, as: UTF8.self)
+        let curlResult = try executeShellCommand(
+            DefaultCurlCommandRenderer().render(prepared)
+        )
+        let appJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: appResponse.bodyData) as? [String: Any]
+        )
+        let curlJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(curlResult.standardOutput.utf8)) as? [String: Any]
+        )
+        let appHeaders = try XCTUnwrap(appJSON["headers"] as? [String: String])
+        let curlHeaders = try XCTUnwrap(curlJSON["headers"] as? [String: String])
+
+        XCTAssertEqual(appResponse.statusCode, 200)
+        XCTAssertEqual(curlResult.status, 0, curlResult.standardError)
+        XCTAssertEqual(appHeaders["Content-Type"], "application/x-www-form-urlencoded", appBody)
+        XCTAssertEqual(curlHeaders["Content-Type"], "application/x-www-form-urlencoded")
+    }
+
+    func testEmptyPostStillSuppressesCurlImplicitContentType() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .post,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("")
+            )
+        )
+
+        XCTAssertTrue(
+            DefaultCurlCommandRenderer().render(prepared)
+                .contains("--header 'Content-Type:'")
+        )
+    }
+
+    func testHeadWithBodyUsesCurlHeadResponseHandlingWithoutChangingTheBodyToAQuery() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .head,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("payload")
+            )
+        )
+
+        let command = DefaultCurlCommandRenderer().render(prepared)
+
+        XCTAssertTrue(command.contains("--request HEAD"))
+        XCTAssertTrue(command.contains("--ignore-content-length"))
+        XCTAssertTrue(command.contains("--data-raw 'payload'"))
+        XCTAssertFalse(command.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "--head \\" })
+    }
+
+    func testPreparationRejectsHeaderValuesContainingLineBreaks() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "X-Test", value: "one\r\nX-Injected: two")],
+            body: .none
+        )
+
+        XCTAssertThrowsError(
+            try DefaultHTTPRequestPreparer(
+                allowsInsecureLoopbackTLS: { false }
+            ).prepare(request)
+        ) { error in
+            guard case .invalidRequest(let message) = error as? ExecutionError else {
+                return XCTFail("Expected invalid request, got \(error)")
+            }
+            XCTAssertTrue(message.contains("X-Test"))
+            XCTAssertTrue(message.contains("line breaks"))
+        }
+    }
+
+    func testTransportConfigurationDoesNotUseAmbientCookiesOrCredentials() {
+        let configuration = URLSessionHTTPTransport.makeIsolatedConfiguration()
+
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCredentialStorage)
+    }
+
+    func testRendererDistinguishesExplicitEmptyHeaderFromCurlHeaderSuppression() throws {
+        let prepared = try DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false }).prepare(
+            Request(
+                method: .post,
+                urlString: "https://example.com",
+                headers: [Header(name: "X-Empty", value: "")],
+                body: .text("payload")
+            )
+        )
+
+        XCTAssertEqual(
+            DefaultCurlCommandRenderer().render(prepared),
+            """
+            curl --location \\
+              --url 'https://example.com' \\
+              --header 'X-Empty;' \\
+              --data-raw 'payload'
+            """
+        )
+    }
+
+    func testEmptyBodyCanonicalCommandReimportsWithoutBecomingNoBody() throws {
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false })
+        let renderer = DefaultCurlCommandRenderer()
+        let generated = renderer.render(
+            try preparer.prepare(
+                Request(
+                    method: .delete,
+                    urlString: "https://example.com/items/1",
+                    headers: [],
+                    body: .text("")
+                )
+            )
+        )
+
+        let reimported = try SimpleCurlImporter().parse(generated)
+
+        XCTAssertEqual(reimported.request.body, .text(""))
+        XCTAssertEqual(renderer.render(try preparer.prepare(reimported.request)), generated)
+    }
+
+    func testEmbeddedNULBodyUsesExecutableAndReimportableByteSafePipeline() throws {
+        let request = Request(
+            method: .post,
+            urlString: "http://localhost:9999/put",
+            headers: [Header(name: "Content-Type", value: "application/octet-stream")],
+            body: .text("before\u{0}after")
+        )
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false })
+        let renderer = DefaultCurlCommandRenderer()
+        let generated = renderer.render(try preparer.prepare(request))
+
+        XCTAssertTrue(generated.hasPrefix("printf '%b' '"))
+        XCTAssertTrue(generated.contains("\\000"))
+        XCTAssertTrue(generated.contains("--data-binary @-"))
+
+        let reimported = try SimpleCurlImporter().parse(generated)
+        XCTAssertEqual(reimported.request.body, request.body)
+        XCTAssertEqual(renderer.render(try preparer.prepare(reimported.request)), generated)
+    }
+
     func testExecutesMinimallyValidRequest() async throws {
         let transport = StubTransport(
             result: .success(
@@ -343,7 +657,7 @@ final class RequestExecutorTests: XCTestCase {
                 curl: #"curl -L http://localhost:9999/redirect/3"#,
                 expectedStatus: 200,
                 expectedFragments: [#""method" : "GET""#, #""path" : "\/get""#],
-                expectedWarnings: ["Redirect-following from `--location` is not represented yet."]
+                expectedWarnings: []
             ),
             LocalServerCurlExample(
                 name: "File upload warning",
@@ -426,6 +740,75 @@ final class RequestExecutorTests: XCTestCase {
         }
     }
 
+    func testCanonicalCurlImportsExecutesCopiesAndReimportsExactly() async throws {
+        let server = try await LocalHTTPTestServer.start()
+        defer { server.stop() }
+        let canonical = """
+        curl --location \\
+          --url 'http://localhost:9999/json'
+        """
+        let importer = SimpleCurlImporter()
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false })
+        let renderer = DefaultCurlCommandRenderer()
+
+        let imported = try importer.parse(canonical)
+        XCTAssertEqual(imported.warnings, [])
+        let prepared = try preparer.prepare(imported.request)
+        let appResponse = try await URLSessionRequestExecutor().execute(prepared)
+        XCTAssertEqual(appResponse.statusCode, 200)
+
+        let generated = renderer.render(prepared)
+        XCTAssertEqual(generated, canonical)
+        let shellResult = try executeShellCommand(generated)
+        XCTAssertEqual(shellResult.status, 0, shellResult.standardError)
+        XCTAssertTrue(shellResult.standardOutput.contains("\"key\": \"value\""))
+
+        let reimported = try importer.parse(generated)
+        XCTAssertEqual(renderer.render(try preparer.prepare(reimported.request)), generated)
+    }
+
+    func testNestedVariablesResolveBeforeAppAndGeneratedCurlExecuteTheSameRequest() async throws {
+        let server = try await LocalHTTPTestServer.start()
+        defer { server.stop() }
+        let importer = SimpleCurlImporter()
+        let request = try importer.parse(
+            """
+            curl --location \\
+              --url '{{base_url}}/headers' \\
+              --header 'Authorization: {{authorization}}'
+            """
+        ).request
+        let variables = [
+            Variable(name: "host", value: "localhost", scope: .global),
+            Variable(name: "base_url", value: "http://{{host}}:9999", scope: .global),
+            Variable(name: "token", value: "abc123", scope: .global),
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global)
+        ]
+        let resolved = try XCTUnwrap(
+            VariableResolver.resolve(request, variables: variables).resolvedRequest
+        )
+        let preparer = DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false })
+        let prepared = try preparer.prepare(resolved)
+
+        let appResponse = try await URLSessionRequestExecutor().execute(prepared)
+        XCTAssertEqual(appResponse.statusCode, 200)
+
+        let generated = DefaultCurlCommandRenderer().render(prepared)
+        XCTAssertEqual(
+            generated,
+            """
+            curl --location \\
+              --url 'http://localhost:9999/headers' \\
+              --header 'Authorization: Bearer abc123'
+            """
+        )
+        XCTAssertFalse(generated.contains("{{"))
+
+        let shellResult = try executeShellCommand(generated)
+        XCTAssertEqual(shellResult.status, 0, shellResult.standardError)
+        XCTAssertTrue(shellResult.standardOutput.contains("Bearer abc123"))
+    }
+
     private func makeHTTPResponse(statusCode: Int, headers: [String: String]) -> HTTPURLResponse {
         HTTPURLResponse(
             url: URL(string: "https://example.com")!,
@@ -506,6 +889,25 @@ private func testPythonExecutableURL() -> URL {
         ?? "/Applications/Xcode.app/Contents/Developer"
     return URL(fileURLWithPath: developerDirectory)
         .appendingPathComponent("usr/bin/python3")
+}
+
+private func executeShellCommand(
+    _ command: String
+) throws -> (status: Int32, standardOutput: String, standardError: String) {
+    let process = Process()
+    let standardOutput = Pipe()
+    let standardError = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+    process.arguments = ["-c", command]
+    process.standardOutput = standardOutput
+    process.standardError = standardError
+    try process.run()
+    process.waitUntilExit()
+    return (
+        process.terminationStatus,
+        String(decoding: standardOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self),
+        String(decoding: standardError.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    )
 }
 
 private actor StubTransport: HTTPTransporting {

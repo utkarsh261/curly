@@ -28,9 +28,15 @@ struct WorkspaceRootView: View {
                 responsePane
                     .frame(minWidth: 420, idealWidth: 680)
             }
+            .disabled(isWorkspaceModalPresented)
+            .accessibilityHidden(isWorkspaceModalPresented)
 
             if coordinator.state.isVariablesModalPresented {
                 variablesModalOverlay
+            }
+
+            if coordinator.state.curlPreviewState != nil {
+                generatedCurlModalOverlay
             }
 
         }
@@ -46,6 +52,7 @@ struct WorkspaceRootView: View {
                     Image(systemName: "sidebar.left")
                 }
                 .help(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
+                .disabled(isWorkspaceModalPresented)
                 .accessibilityLabel(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
                 .accessibilityIdentifier("toggle-library-button")
             }
@@ -91,6 +98,10 @@ struct WorkspaceRootView: View {
                 }
             }
         }
+    }
+
+    private var isWorkspaceModalPresented: Bool {
+        coordinator.state.isVariablesModalPresented || coordinator.state.curlPreviewState != nil
     }
 
     private var workspaceNameBinding: Binding<String> {
@@ -203,6 +214,36 @@ struct WorkspaceRootView: View {
             }
         }
         .accessibilityIdentifier("variables-modal-overlay")
+        .accessibilityAddTraits(.isModal)
+    }
+
+    private var generatedCurlModalOverlay: some View {
+        GeometryReader { geometry in
+            ZStack {
+                Color.black.opacity(0.24)
+                    .ignoresSafeArea()
+                    .accessibilityIdentifier("generated-curl-modal-backdrop")
+                    .onTapGesture {
+                        coordinator.dismissCurlPreview()
+                    }
+
+                if let previewState = coordinator.state.curlPreviewState {
+                    GeneratedCurlModalView(
+                        content: previewState.content,
+                        maximumHeight: geometry.size.height - 48,
+                        onClose: coordinator.dismissCurlPreview
+                    )
+                    .frame(
+                        width: GeneratedCurlModalMetrics.preferredWidth(
+                            for: previewState.content,
+                            constrainedTo: geometry.size.width - 48
+                        )
+                    )
+                    .transition(.scale(scale: 0.98).combined(with: .opacity))
+                }
+            }
+        }
+        .accessibilityAddTraits(.isModal)
     }
 
     private func dismissVariablesModalSavingEdits() {
@@ -252,6 +293,16 @@ struct WorkspaceRootView: View {
                 .help("Revert to Saved")
                 .disabled(!coordinator.state.canRevertCurrentRequest)
                 .accessibilityIdentifier("revert-request-button")
+
+                Button {
+                    coordinator.presentCurlPreview()
+                } label: {
+                    Image(systemName: "terminal")
+                }
+                .buttonStyle(.bordered)
+                .help("View generated cURL")
+                .accessibilityLabel("View generated cURL")
+                .accessibilityIdentifier("view-generated-curl-button")
 
                 Button {
                     coordinator.deleteCurrentRequest()
@@ -1239,6 +1290,224 @@ private struct RequestEditorAccordion: View {
         case .info: return .primary
         case .warning: return .orange
         case .error: return .red
+        }
+    }
+}
+
+private enum CurlCopyStatus {
+    case ready
+    case copied
+    case failed
+}
+
+private enum GeneratedCurlModalMetrics {
+    static let chromeHeight: CGFloat = 166
+    static let minimumCommandViewportHeight: CGFloat = 72
+    static let maximumHeight: CGFloat = 500
+    static let minimumWidth: CGFloat = 500
+    static let maximumWidth: CGFloat = 640
+    static let estimatedMonospacedCharacterWidth: CGFloat = 8
+    static let horizontalChromeWidth: CGFloat = 72
+
+    static func preferredWidth(for content: CurlPreviewContent, constrainedTo maximumWidth: CGFloat) -> CGFloat {
+        let desiredWidth: CGFloat
+        switch content {
+        case .loading, .error:
+            desiredWidth = minimumWidth
+        case .command(let command):
+            let longestLineLength = command
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(\.count)
+                .max() ?? 0
+            desiredWidth = CGFloat(longestLineLength) * estimatedMonospacedCharacterWidth
+                + horizontalChromeWidth
+        }
+
+        let contentWidth = min(Self.maximumWidth, max(minimumWidth, desiredWidth))
+        return min(maximumWidth, contentWidth)
+    }
+
+    static func preferredHeight(for content: CurlPreviewContent, constrainedTo maximumHeight: CGFloat) -> CGFloat {
+        let desiredHeight: CGFloat
+        switch content {
+        case .loading:
+            desiredHeight = chromeHeight + minimumCommandViewportHeight
+        case .error:
+            desiredHeight = 300
+        case .command(let command):
+            let lineCount = command.split(separator: "\n", omittingEmptySubsequences: false).count
+            let commandHeight = max(
+                minimumCommandViewportHeight,
+                CGFloat(lineCount) * 18 + 20
+            )
+            desiredHeight = chromeHeight + commandHeight
+        }
+
+        return min(maximumHeight, min(Self.maximumHeight, desiredHeight))
+    }
+}
+
+private struct GeneratedCurlModalView: View {
+    let content: CurlPreviewContent
+    let maximumHeight: CGFloat
+    let onClose: () -> Void
+
+    @State private var copyStatus: CurlCopyStatus = .ready
+    @State private var copyResetTask: Task<Void, Never>?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Generated cURL")
+                        .font(.title2.weight(.semibold))
+                    Text("This is the request Curly will send.")
+                        .font(.caption)
+                        .foregroundStyle(Color.textMuted)
+                }
+
+                Spacer()
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(Circle().fill(Color.surfaceInset))
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityIdentifier("generated-curl-modal-close-button")
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 18)
+
+            Divider()
+
+            modalContent
+                .padding(14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            Divider()
+
+            HStack(spacing: 10) {
+                if copyStatus == .failed {
+                    Label("Copy failed", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(Color.red)
+                        .accessibilityIdentifier("generated-curl-copy-error")
+                }
+
+                Spacer()
+
+                Button("Close", action: onClose)
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("generated-curl-close-button")
+
+                if case .command(let command) = content {
+                    Button {
+                        copy(command)
+                    } label: {
+                        switch copyStatus {
+                        case .copied:
+                            Label("Copied", systemImage: "checkmark")
+                        case .ready, .failed:
+                            Label("Copy cURL", systemImage: "doc.on.doc")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.accent)
+                    .accessibilityIdentifier("copy-generated-curl-button")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+        }
+        .frame(
+            height: GeneratedCurlModalMetrics.preferredHeight(
+                for: content,
+                constrainedTo: maximumHeight
+            )
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.surfaceRaised)
+                .shadow(color: .black.opacity(0.24), radius: 24, y: 10)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.borderSubtle, lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onDisappear {
+            copyResetTask?.cancel()
+        }
+    }
+
+    @ViewBuilder
+    private var modalContent: some View {
+        switch content {
+        case .loading:
+            VStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.large)
+                Text("Generating cURL…")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textMuted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("generated-curl-loading")
+
+        case .command(let command):
+            ScrollView([.horizontal, .vertical]) {
+                Text(command)
+                    .font(.body.monospaced())
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .accessibilityIdentifier("generated-curl-text")
+            }
+            .defaultScrollAnchor(.topLeading)
+            .accessibilityIdentifier("generated-curl-command-scroll-view")
+            .background(Color.surfaceInset)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color.borderSubtle, lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+        case .error(let message):
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.orange)
+                Text("Could not generate cURL")
+                    .font(.headline)
+                Text(message)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.textMuted)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("generated-curl-error")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func copy(_ command: String) {
+        copyResetTask?.cancel()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(command, forType: .string) else {
+            copyStatus = .failed
+            return
+        }
+
+        copyStatus = .copied
+        copyResetTask = Task {
+            try? await Task.sleep(for: .milliseconds(1_500))
+            guard !Task.isCancelled else { return }
+            copyStatus = .ready
         }
     }
 }

@@ -324,11 +324,12 @@ private enum SidebarVisibilityPreferences {
 
 #if DEBUG
 private struct UITestEchoRequestExecutor: RequestExecuting {
-    func execute(_ request: Request) async throws -> ExecutedResponse {
+    func execute(_ preparedRequest: PreparedHTTPRequest) async throws -> ExecutedResponse {
         if ProcessInfo.processInfo.arguments.contains("--ui-test-stub-failure") {
             throw ExecutionError.transport("UI test transport failure")
         }
 
+        let request = preparedRequest.sourceRequest
         let headerLines = request.headers
             .filter(\.isEnabled)
             .map { "\($0.name)=\($0.value)" }
@@ -459,11 +460,13 @@ struct WorkspaceCommands: Commands {
                 coordinator.createOrFocusHiddenNewDraft()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(coordinator.state.curlPreviewState != nil)
 
             Button("Save Request") {
                 coordinator.saveCurrentRequest()
             }
             .keyboardShortcut("s", modifiers: [.command])
+            .disabled(coordinator.state.curlPreviewState != nil)
 
             Divider()
 
@@ -501,6 +504,7 @@ struct WorkspaceCommands: Commands {
                 NSApp.activate(ignoringOtherApps: true)
             }
             .keyboardShortcut("0", modifiers: [.command])
+            .disabled(coordinator.state.curlPreviewState != nil)
         }
     }
 

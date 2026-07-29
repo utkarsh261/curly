@@ -534,12 +534,19 @@ struct URLInputField: NSViewRepresentable {
 
         private static func looksLikeCurlCommand(_ text: String) -> Bool {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed == "curl" || trimmed.hasPrefix("curl ") || trimmed.hasPrefix("curl\t") || trimmed.hasPrefix("curl\n")
+            return trimmed == "curl" ||
+                trimmed.hasPrefix("curl ") ||
+                trimmed.hasPrefix("curl\t") ||
+                trimmed.hasPrefix("curl\n") ||
+                trimmed.hasPrefix("printf '%b' ")
         }
 
         private static func looksLikeCompleteCurlCommand(_ text: String) -> Bool {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return looksLikeCurlCommand(trimmed) && trimmed.contains("://")
+            let hasURLCandidate = trimmed.contains("://") ||
+                trimmed.contains("--url") ||
+                (trimmed.contains("{{") && trimmed.contains("}}"))
+            return looksLikeCurlCommand(trimmed) && hasURLCandidate
         }
 
         private static func looksLikeAbsoluteURL(_ text: String) -> Bool {
