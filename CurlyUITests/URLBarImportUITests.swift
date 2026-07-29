@@ -49,7 +49,16 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(generatedCurlButton.waitForExistence(timeout: 3))
         generatedCurlButton.click()
         XCTAssertTrue(app.otherElements["generated-curl-modal-backdrop"].firstMatch.waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts[canonicalCurl].firstMatch.waitForExistence(timeout: 3))
+        let generatedCurlText = app.staticTexts["generated-curl-text"].firstMatch
+        XCTAssertTrue(generatedCurlText.waitForExistence(timeout: 3))
+        XCTAssertEqual(text(of: generatedCurlText), canonicalCurl)
+        let closeButton = app.buttons["generated-curl-modal-close-button"].firstMatch
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 3))
+        XCTAssertLessThan(
+            generatedCurlText.frame.minY - closeButton.frame.maxY,
+            100,
+            "Short generated commands should stay near the top of a content-sized modal."
+        )
 
         NSPasteboard.general.clearContents()
         app.buttons["copy-generated-curl-button"].firstMatch.click()
@@ -126,6 +135,53 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(text(of: error).contains("Define missing"))
         XCTAssertFalse(app.buttons["copy-generated-curl-button"].firstMatch.exists)
         XCTAssertEqual(urlField.value as? String, "https://{{missing}}/users")
+    }
+
+    func testLongGeneratedCurlUsesContentSizedModalWithoutBlankVerticalSpace() {
+        let curl = """
+        curl --location \\
+          --url 'http://localhost:9999/post?a=tkt=ticket_1' \\
+          --header 'Auth: Bearer token = tkt=ticket_1' \\
+          --header 'Content-Type: application/json' \\
+          --data-raw '{
+          "string" : "this is a string",
+          "title" : "hello",
+          "count" : 42,
+          "list" : [
+            "hey",
+            213
+          ]
+        }'
+        """
+        let app = launchEmptyApp()
+        defer { app.terminate() }
+        paste(curl, into: app.textFields["url-input-field"].firstMatch)
+
+        app.buttons["view-generated-curl-button"].firstMatch.click()
+        let commandText = app.staticTexts["generated-curl-text"].firstMatch
+        XCTAssertTrue(commandText.waitForExistence(timeout: 3))
+        let commandScrollView = app.scrollViews["generated-curl-command-scroll-view"].firstMatch
+        let modalCloseButton = app.buttons["generated-curl-modal-close-button"].firstMatch
+        let footerCopyButton = app.buttons["copy-generated-curl-button"].firstMatch
+        XCTAssertTrue(commandScrollView.waitForExistence(timeout: 3))
+        XCTAssertTrue(modalCloseButton.waitForExistence(timeout: 3))
+        XCTAssertTrue(footerCopyButton.waitForExistence(timeout: 3))
+
+        XCTAssertLessThan(
+            commandScrollView.frame.width,
+            620,
+            "The generated cURL modal should fit its content instead of keeping the old 780-point width."
+        )
+        XCTAssertLessThan(
+            commandText.frame.minY - modalCloseButton.frame.maxY,
+            100,
+            "The command should be pinned near the top of its code area."
+        )
+        XCTAssertLessThan(
+            footerCopyButton.frame.minY - commandText.frame.maxY,
+            60,
+            "The modal should not leave a large blank region below a fully visible command."
+        )
     }
 
     func testRealPasteSimpleCurlParsesURLAndEnablesRun() throws {

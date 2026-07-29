@@ -225,7 +225,12 @@ struct WorkspaceRootView: View {
                         maximumHeight: geometry.size.height - 48,
                         onClose: coordinator.dismissCurlPreview
                     )
-                    .frame(width: 780)
+                    .frame(
+                        width: GeneratedCurlModalMetrics.preferredWidth(
+                            for: previewState.content,
+                            constrainedTo: geometry.size.width - 48
+                        )
+                    )
                     .transition(.scale(scale: 0.98).combined(with: .opacity))
                 }
             }
@@ -1286,6 +1291,53 @@ private enum CurlCopyStatus {
     case failed
 }
 
+private enum GeneratedCurlModalMetrics {
+    static let chromeHeight: CGFloat = 166
+    static let minimumCommandViewportHeight: CGFloat = 72
+    static let maximumHeight: CGFloat = 500
+    static let minimumWidth: CGFloat = 500
+    static let maximumWidth: CGFloat = 640
+    static let estimatedMonospacedCharacterWidth: CGFloat = 8
+    static let horizontalChromeWidth: CGFloat = 72
+
+    static func preferredWidth(for content: CurlPreviewContent, constrainedTo maximumWidth: CGFloat) -> CGFloat {
+        let desiredWidth: CGFloat
+        switch content {
+        case .loading, .error:
+            desiredWidth = minimumWidth
+        case .command(let command):
+            let longestLineLength = command
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(\.count)
+                .max() ?? 0
+            desiredWidth = CGFloat(longestLineLength) * estimatedMonospacedCharacterWidth
+                + horizontalChromeWidth
+        }
+
+        let contentWidth = min(Self.maximumWidth, max(minimumWidth, desiredWidth))
+        return min(maximumWidth, contentWidth)
+    }
+
+    static func preferredHeight(for content: CurlPreviewContent, constrainedTo maximumHeight: CGFloat) -> CGFloat {
+        let desiredHeight: CGFloat
+        switch content {
+        case .loading:
+            desiredHeight = chromeHeight + minimumCommandViewportHeight
+        case .error:
+            desiredHeight = 300
+        case .command(let command):
+            let lineCount = command.split(separator: "\n", omittingEmptySubsequences: false).count
+            let commandHeight = max(
+                minimumCommandViewportHeight,
+                CGFloat(lineCount) * 18 + 20
+            )
+            desiredHeight = chromeHeight + commandHeight
+        }
+
+        return min(maximumHeight, min(Self.maximumHeight, desiredHeight))
+    }
+}
+
 private struct GeneratedCurlModalView: View {
     let content: CurlPreviewContent
     let maximumHeight: CGFloat
@@ -1323,8 +1375,8 @@ private struct GeneratedCurlModalView: View {
             Divider()
 
             modalContent
-                .padding(20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             Divider()
 
@@ -1361,7 +1413,12 @@ private struct GeneratedCurlModalView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
         }
-        .frame(height: min(maximumHeight, 520))
+        .frame(
+            height: GeneratedCurlModalMetrics.preferredHeight(
+                for: content,
+                constrainedTo: maximumHeight
+            )
+        )
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color.surfaceRaised)
@@ -1397,10 +1454,12 @@ private struct GeneratedCurlModalView: View {
                     .font(.body.monospaced())
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .accessibilityIdentifier("generated-curl-text")
             }
-            .padding(16)
+            .defaultScrollAnchor(.topLeading)
+            .accessibilityIdentifier("generated-curl-command-scroll-view")
             .background(Color.surfaceInset)
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
