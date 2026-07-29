@@ -107,6 +107,114 @@ final class VariablesUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
     }
 
+    func testEditingHeaderValueInMiddleKeepsCaretAtEditLocation() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        replaceText(
+            "curl https://api.example.com/users -H 'X-Test: abcdefghij'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+
+        let headerValueField = variableFields(named: "header-value-field-", in: app).firstMatch
+        XCTAssertTrue(headerValueField.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdefghij"
+        })
+
+        headerValueField.click()
+        headerValueField.typeKey(.rightArrow, modifierFlags: .command)
+        for _ in 0..<4 {
+            headerValueField.typeKey(.leftArrow, modifierFlags: [])
+        }
+        headerValueField.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
+
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdeghij"
+        })
+
+        headerValueField.typeText("X")
+
+        XCTAssertEqual(
+            headerValueField.value as? String,
+            "abcdeXghij",
+            "The caret should remain where Backspace edited the header value."
+        )
+    }
+
+    func testInsertingHeaderValueInMiddleKeepsCaretAtEditLocation() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        replaceText(
+            "curl https://api.example.com/users -H 'X-Test: abcdefghij'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+
+        let headerValueField = variableFields(named: "header-value-field-", in: app).firstMatch
+        XCTAssertTrue(headerValueField.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdefghij"
+        })
+
+        headerValueField.click()
+        headerValueField.typeKey(.rightArrow, modifierFlags: .command)
+        for _ in 0..<4 {
+            headerValueField.typeKey(.leftArrow, modifierFlags: [])
+        }
+        headerValueField.typeText("X")
+
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdefXghij"
+        })
+
+        headerValueField.typeText("Y")
+
+        XCTAssertEqual(
+            headerValueField.value as? String,
+            "abcdefXYghij",
+            "The caret should remain where a character was inserted into the header value."
+        )
+    }
+
+    func testReplacingHeaderValueSelectionKeepsCaretAtEditLocation() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        replaceText(
+            "curl https://api.example.com/users -H 'X-Test: abcdefghij'",
+            in: app.textFields["url-input-field"].firstMatch
+        )
+
+        let headerValueField = variableFields(named: "header-value-field-", in: app).firstMatch
+        XCTAssertTrue(headerValueField.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdefghij"
+        })
+
+        headerValueField.click()
+        headerValueField.typeKey(.rightArrow, modifierFlags: .command)
+        for _ in 0..<4 {
+            headerValueField.typeKey(.leftArrow, modifierFlags: [])
+        }
+        for _ in 0..<2 {
+            headerValueField.typeKey(.leftArrow, modifierFlags: .shift)
+        }
+        headerValueField.typeText("X")
+
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            headerValueField.value as? String == "abcdXghij"
+        })
+
+        headerValueField.typeText("Y")
+
+        XCTAssertEqual(
+            headerValueField.value as? String,
+            "abcdXYghij",
+            "The caret should remain after replacement text in the header value."
+        )
+    }
+
     func testNestedMissingLeafShowsModalWarningAndBlocksDispatch() {
         let app = launchWithStubExecutor()
         defer { app.terminate() }

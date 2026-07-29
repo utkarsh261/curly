@@ -119,17 +119,20 @@ struct URLInputField: NSViewRepresentable {
         textField.setAccessibilityIdentifier(accessibilityIdentifier)
 
         if let editor = textField.currentEditor() as? NSTextView {
-            if editor.string != text {
+            if context.coordinator.shouldApplyModelText(text, editorText: editor.string) {
+                let selectedRange = editor.selectedRange()
                 editor.string = text
-                editor.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+                editor.setSelectedRange(Self.clampedSelection(selectedRange, in: text))
                 editor.applyURLTokenAttributes(variables: variables)
                 context.coordinator.recordEditedText(text)
             }
         } else if textField.stringValue != text {
             textField.stringValue = text
             textField.needsDisplay = true
+            context.coordinator.recordEditedText(text)
         } else {
             textField.needsDisplay = true
+            context.coordinator.recordEditedText(text)
         }
         textField.refreshVariableAccessibility()
 
@@ -146,6 +149,13 @@ struct URLInputField: NSViewRepresentable {
         }
     }
 
+    static func clampedSelection(_ selection: NSRange, in text: String) -> NSRange {
+        let textLength = (text as NSString).length
+        let location = min(selection.location, textLength)
+        let length = min(selection.length, textLength - location)
+        return NSRange(location: location, length: length)
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTextFieldDelegate, NSTextViewDelegate {
         var text: Binding<String>
@@ -155,7 +165,9 @@ struct URLInputField: NSViewRepresentable {
         private var lastSelectedRange = NSRange(location: 0, length: 0)
         private var isAdjustingSelection = false
         private var pendingCurlParseWorkItem: DispatchWorkItem?
-        private var previousEditedText = ""
+        private var previousEditedText: String
+        private var lastObservedModelText: String
+        private var pendingUserEditedText: String?
         private weak var activeTextField: PasteAwareTextField?
         private var didInstallTextObserver = false
         private var lastHandledFocusRequest = 0
@@ -170,6 +182,9 @@ struct URLInputField: NSViewRepresentable {
             self.isFocused = isFocused
             self.onPaste = onPaste
             self.onCommit = onCommit
+            let initialText = text.wrappedValue
+            self.previousEditedText = initialText
+            self.lastObservedModelText = initialText
         }
 
         deinit {
@@ -227,6 +242,27 @@ struct URLInputField: NSViewRepresentable {
 
         func recordEditedText(_ text: String) {
             previousEditedText = text
+            lastObservedModelText = text
+            if pendingUserEditedText == text {
+                pendingUserEditedText = nil
+            }
+        }
+
+        func shouldApplyModelText(_ modelText: String, editorText: String) -> Bool {
+            if modelText == editorText {
+                recordEditedText(modelText)
+                return false
+            }
+
+            if let pendingUserEditedText,
+               editorText == pendingUserEditedText,
+               modelText == lastObservedModelText {
+                return false
+            }
+
+            lastObservedModelText = modelText
+            self.pendingUserEditedText = nil
+            return true
         }
 
         func consumeFocusRequest(_ focusRequest: Int) -> Bool {
@@ -253,8 +289,9 @@ struct URLInputField: NSViewRepresentable {
                 }
             }
 
-            text.wrappedValue = currentText
             previousEditedText = currentText
+            pendingUserEditedText = currentText
+            text.wrappedValue = currentText
             if let editor {
                 snapSelectionIfNeeded(in: editor)
                 editor.applyURLTokenAttributes(variables: textField.variables)

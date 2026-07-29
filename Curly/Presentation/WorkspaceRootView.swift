@@ -802,7 +802,11 @@ private struct HeaderRowView: View {
 
             URLInputField(
                 text: Binding(
-                    get: { header.value },
+                    get: {
+                        coordinator.state.workspaceRequest.headers
+                            .first(where: { $0.id == header.id })?
+                            .value ?? ""
+                    },
                     set: { coordinator.updateHeader(id: header.id, value: $0) }
                 ),
                 variables: coordinator.listVariablesForCurrentContext(),
