@@ -107,6 +107,63 @@ final class VariablesUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
     }
 
+    func testVariableTokensShowResolvedValueOnHoverEverywhere() {
+        let app = launchWithStubExecutor()
+        defer { app.terminate() }
+
+        openVariablesModal(in: app)
+        createVariable(name: "token", value: "abc", addButton: "Add Global Variable", in: app)
+        createVariable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            addButton: "Add Global Variable",
+            in: app
+        )
+
+        let nestedValueField = app.textFields
+            .matching(NSPredicate(format: "value == %@", "Bearer {{token}}"))
+            .firstMatch
+        XCTAssertTrue(nestedValueField.waitForExistence(timeout: 2))
+        assertToolTip(
+            "token resolves to:\nabc",
+            hoveringAtXOffset: 95,
+            in: nestedValueField,
+            app: app
+        )
+
+        app.typeKey(.escape, modifierFlags: [])
+        let urlField = app.textFields["url-input-field"].firstMatch
+        replaceText("{{token}}", in: urlField)
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            urlField.label.contains("Recognized variable token")
+        })
+        assertToolTip(
+            "token resolves to:\nabc",
+            hoveringAtXOffset: 35,
+            in: urlField,
+            app: app
+        )
+
+        replaceText(
+            "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
+            in: urlField
+        )
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            urlField.value as? String == "https://api.example.com/users"
+        })
+        let headerValueField = variableFields(named: "header-value-field-", in: app).firstMatch
+        XCTAssertTrue(headerValueField.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            headerValueField.label.contains("Recognized variable authorization")
+        })
+        assertToolTip(
+            "authorization resolves to:\nBearer abc",
+            hoveringAtXOffset: 70,
+            in: headerValueField,
+            app: app
+        )
+    }
+
     func testEditingHeaderValueInMiddleKeepsCaretAtEditLocation() {
         let app = launchWithStubExecutor()
         defer { app.terminate() }
@@ -244,6 +301,32 @@ final class VariablesUITests: XCTestCase {
                 .waitForExistence(timeout: 3)
         )
         XCTAssertFalse(app.staticTexts["response-body-text"].firstMatch.exists)
+    }
+
+    private func assertToolTip(
+        _ text: String,
+        hoveringAtXOffset xOffset: CGFloat,
+        in element: XCUIElement,
+        app: XCUIApplication
+    ) {
+        let hoverPoint = element.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: xOffset, dy: element.frame.height / 2))
+        hoverPoint.hover()
+
+        XCTAssertTrue(
+            app.staticTexts[text].firstMatch.waitForExistence(timeout: 4),
+            "Expected hovering the variable token to show “\(text)”."
+        )
+
+        app.windows.firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.02))
+            .hover()
+        XCTAssertTrue(
+            waitUntil(timeout: 2) {
+                !app.staticTexts[text].firstMatch.exists
+            },
+            "Expected the variable tooltip to disappear after moving away."
+        )
     }
 
     func testNestedCycleShowsInlineErrorAndBlocksDispatch() {

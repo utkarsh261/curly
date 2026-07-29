@@ -112,6 +112,122 @@ final class RequestValidationTests: XCTestCase {
         )
     }
 
+    func testVariableTokenToolTipsShowFullyResolvedNestedValuesAndDiagnostics() throws {
+        let token = Variable(name: "token", value: "abc", scope: .global)
+        let authorization = Variable(
+            name: "authorization",
+            value: "Bearer {{token}}",
+            scope: .global
+        )
+
+        let resolved = try XCTUnwrap(
+            VariableTemplateTokenToolTips.items(
+                text: "{{authorization}}",
+                variables: [token, authorization]
+            ).first
+        )
+        XCTAssertEqual(resolved.range, NSRange(location: 0, length: 17))
+        XCTAssertEqual(resolved.text, "authorization resolves to:\nBearer abc")
+
+        let missing = try XCTUnwrap(
+            VariableTemplateTokenToolTips.items(
+                text: "{{authorization}}",
+                variables: [authorization]
+            ).first
+        )
+        XCTAssertEqual(missing.text, "authorization → token refers to missing variable token")
+
+        let invalid = try XCTUnwrap(
+            VariableTemplateTokenToolTips.items(
+                text: "{{not valid}}",
+                variables: []
+            ).first
+        )
+        XCTAssertEqual(invalid.text, "{{not valid}} has invalid syntax")
+    }
+
+    @MainActor
+    func testVariableTokenToolTipLayoutWrapsMultilineAndLongValuesAfterAShortDelay() {
+        let singleLineSize = VariableTokenToolTipLayout.panelSize(
+            for: "token resolves to abc"
+        )
+        let multilineSize = VariableTokenToolTipLayout.panelSize(
+            for: "payload resolves to {\n  \"token\": \"abc\",\n  \"enabled\": true\n}"
+        )
+        let wrappedSize = VariableTokenToolTipLayout.panelSize(
+            for: "payload resolves to " + String(repeating: "a readable long value ", count: 20)
+        )
+        let unbrokenValueSize = VariableTokenToolTipLayout.panelSize(
+            for: "token resolves to " + String(repeating: "abcdef123456", count: 40)
+        )
+
+        let wrappingTextView = VariableTokenToolTipLayout.makeTextView(
+            for: "token resolves to " + String(repeating: "abcdef123456", count: 40)
+        )
+        wrappingTextView.frame = NSRect(
+            origin: .zero,
+            size: NSSize(
+                width: VariableTokenToolTipLayout.maximumTextWidth,
+                height: VariableTokenToolTipLayout.maximumTextHeight
+            )
+        )
+        guard let layoutManager = wrappingTextView.layoutManager,
+              let textContainer = wrappingTextView.textContainer else {
+            XCTFail("Expected the tooltip text view to have a TextKit layout stack.")
+            return
+        }
+        layoutManager.ensureLayout(for: textContainer)
+        var renderedLineCount = 0
+        var glyphIndex = 0
+        while glyphIndex < layoutManager.numberOfGlyphs {
+            var lineRange = NSRange()
+            layoutManager.lineFragmentRect(
+                forGlyphAt: glyphIndex,
+                effectiveRange: &lineRange
+            )
+            renderedLineCount += 1
+            glyphIndex = NSMaxRange(lineRange)
+        }
+
+        XCTAssertEqual(VariableTokenToolTipLayout.presentationDelay, 0.8, accuracy: 0.001)
+        XCTAssertGreaterThan(multilineSize.height, singleLineSize.height)
+        XCTAssertGreaterThan(wrappedSize.height, singleLineSize.height)
+        XCTAssertGreaterThan(unbrokenValueSize.height, singleLineSize.height)
+        XCTAssertGreaterThan(renderedLineCount, 1)
+        XCTAssertEqual(wrappingTextView.textContainer?.lineBreakMode, .byCharWrapping)
+        XCTAssertFalse(wrappingTextView.isEditable)
+        XCTAssertFalse(wrappingTextView.isSelectable)
+        XCTAssertLessThanOrEqual(multilineSize.width, VariableTokenToolTipLayout.maximumPanelWidth)
+        XCTAssertLessThanOrEqual(wrappedSize.width, VariableTokenToolTipLayout.maximumPanelWidth)
+        XCTAssertLessThanOrEqual(unbrokenValueSize.width, VariableTokenToolTipLayout.maximumPanelWidth)
+    }
+
+    @MainActor
+    func testSharedVariableFieldEditorAttachesToolTipOnlyToEachToken() throws {
+        let variables = [
+            Variable(name: "host", value: "api.example.com", scope: .global),
+            Variable(name: "token", value: "abc", scope: .global),
+            Variable(name: "authorization", value: "Bearer {{token}}", scope: .global)
+        ]
+        let editor = URLTokenFieldEditor()
+        editor.string = "https://{{host}}/{{authorization}}"
+        let textField = PasteAwareTextField()
+        textField.variables = variables
+
+        textField.prepareFieldEditor(editor)
+
+        XCTAssertNil(editor.textStorage?.attribute(.variableTokenToolTip, at: 0, effectiveRange: nil))
+        XCTAssertEqual(
+            editor.textStorage?.attribute(.variableTokenToolTip, at: 8, effectiveRange: nil) as? String,
+            "host resolves to:\napi.example.com"
+        )
+        XCTAssertNil(editor.textStorage?.attribute(.variableTokenToolTip, at: 16, effectiveRange: nil))
+        XCTAssertEqual(
+            editor.textStorage?.attribute(.variableTokenToolTip, at: 18, effectiveRange: nil) as? String,
+            "authorization resolves to:\nBearer abc"
+        )
+    }
+
     func testVariablesModalHeightFitsContentWithinCompactBounds() {
         XCTAssertEqual(VariableModalMetrics.height(contentHeight: 280, availableHeight: 900), 360)
         XCTAssertEqual(VariableModalMetrics.height(contentHeight: 486, availableHeight: 900), 486)

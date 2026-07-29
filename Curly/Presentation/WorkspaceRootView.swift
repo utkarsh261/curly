@@ -1909,7 +1909,6 @@ private struct VariableEditableRowView: View {
             )
                 .modifier(VariableFieldStyle(isFocused: focusedField == .value))
                 .frame(maxWidth: .infinity)
-                .help(valueHelpText)
 
             VariableDeleteButton(
                 accessibilityIdentifier: "variable-delete-button-\(variable.id.uuidString)",
@@ -1993,13 +1992,6 @@ private struct VariableEditableRowView: View {
             return nil
         }
         return (issue.diagnostic, issue.missingName != nil)
-    }
-
-    private var valueHelpText: String {
-        if let issue = previewExpansion.issues.first {
-            return issue.diagnostic
-        }
-        return previewExpansion.value.map { "\(previewVariableName) resolves to \($0)" } ?? value
     }
 
     private var previewVariableName: String {
