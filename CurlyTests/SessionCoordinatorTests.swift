@@ -229,7 +229,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.state.inlineErrorMessage)
     }
 
-    func testNonEmptyWorkspaceCurlPasteStagesReplacementWarnings() {
+    func testNonEmptyWorkspaceLocationCurlPasteDoesNotStageAWarning() {
         let coordinator = SessionCoordinator()
         coordinator.setURL("https://current.example.com")
 
@@ -237,7 +237,7 @@ final class SessionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://current.example.com")
         XCTAssertEqual(coordinator.state.replaceConfirmationState?.candidateRequest.urlString, "https://replacement.example.com")
-        XCTAssertEqual(coordinator.state.replaceConfirmationState?.candidateWarnings, ["Redirect-following from `--location` is not represented yet."])
+        XCTAssertEqual(coordinator.state.replaceConfirmationState?.candidateWarnings, [])
         XCTAssertNil(coordinator.state.requestIssueMessage)
     }
 
@@ -304,7 +304,7 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.requestEditorExpansion, .allExpanded)
     }
 
-    func testConfirmReplacementAppliesImportWarning() {
+    func testConfirmLocationReplacementDoesNotApplyImportWarning() {
         let coordinator = SessionCoordinator()
         coordinator.setURL("https://current.example.com")
 
@@ -312,8 +312,7 @@ final class SessionCoordinatorTests: XCTestCase {
         coordinator.confirmWorkspaceReplacement()
 
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://replacement.example.com")
-        XCTAssertEqual(coordinator.state.requestIssueSeverity, .warning)
-        XCTAssertEqual(coordinator.state.requestIssueMessage, "Redirect-following from `--location` is not represented yet.")
+        XCTAssertNil(coordinator.state.requestIssueMessage)
         XCTAssertTrue(coordinator.state.canRun)
     }
 
@@ -336,7 +335,7 @@ final class SessionCoordinatorTests: XCTestCase {
     func testWarningClearsWhenRequestIsEdited() {
         let coordinator = SessionCoordinator()
 
-        coordinator.handleURLBarPaste("curl --location https://example.com")
+        coordinator.handleURLBarPaste("curl --verbose https://example.com")
         XCTAssertEqual(coordinator.state.requestIssueSeverity, .warning)
 
         coordinator.setURL("https://edited.example.com")
@@ -1002,6 +1001,103 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.state.isVariablesModalPresented)
     }
 
+    func testGeneratedCurlResolvesNestedURLAndHeaderVariablesButKeepsBodyLiteral() async {
+        let coordinator = SessionCoordinator()
+        XCTAssertNotNil(coordinator.createVariable(name: "host", value: "localhost", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "base", value: "http://{{host}}:9999", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "abc123", scope: .global))
+        XCTAssertNotNil(coordinator.createVariable(name: "authorization", value: "Bearer {{token}}", scope: .global))
+        coordinator.setURL("{{base}}/post")
+        coordinator.addHeader()
+        guard let header = coordinator.state.workspaceRequest.headers.last else {
+            XCTFail("Expected header")
+            return
+        }
+        coordinator.updateHeader(
+            id: header.id,
+            name: "Authorization",
+            value: "{{authorization}}",
+            isEnabled: true
+        )
+        coordinator.setBody(#"{"literal":"{{token}}"}"#)
+
+        coordinator.presentCurlPreview()
+
+        await waitUntil {
+            if case .command = coordinator.state.curlPreviewState?.content {
+                return true
+            }
+            return false
+        }
+        guard case .command(let command) = coordinator.state.curlPreviewState?.content else {
+            return XCTFail("Expected generated command")
+        }
+        XCTAssertTrue(command.contains("'http://localhost:9999/post'"))
+        XCTAssertTrue(command.contains("'Authorization: Bearer abc123'"))
+        XCTAssertTrue(command.contains(#"{"literal":"{{token}}"}"#))
+    }
+
+    func testGeneratedCurlShowsErrorWithoutChangingInlineRequestState() {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://{{missing}}/users")
+
+        coordinator.presentCurlPreview()
+
+        guard case .error(let message) = coordinator.state.curlPreviewState?.content else {
+            return XCTFail("Expected cURL error state")
+        }
+        XCTAssertEqual(message, "Define missing before running this request.")
+        XCTAssertNil(coordinator.state.inlineMessage)
+    }
+
+    func testGeneratedCurlUsesFrozenInFlightRequest() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(requestExecutor: executor)
+        coordinator.setURL("https://example.com/first")
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.isWaitingForResponse }
+        coordinator.setURL("https://example.com/edited")
+
+        coordinator.presentCurlPreview()
+
+        await waitUntil {
+            if case .command = coordinator.state.curlPreviewState?.content {
+                return true
+            }
+            return false
+        }
+        guard case .command(let command) = coordinator.state.curlPreviewState?.content else {
+            return XCTFail("Expected generated command")
+        }
+        XCTAssertTrue(command.contains("'https://example.com/first'"))
+        XCTAssertFalse(command.contains("edited"))
+
+        await executor.resumeSuccess(
+            ExecutedResponse(
+                request: Request(method: .get, urlString: "https://example.com/first", headers: [], body: .none),
+                statusCode: 200,
+                headers: [],
+                bodyData: Data(),
+                mimeType: nil,
+                duration: 0.01,
+                timestamp: Date()
+            )
+        )
+    }
+
+    func testDismissingGeneratedCurlClearsSnapshotAndRestoresNavigation() async {
+        let coordinator = SessionCoordinator()
+        coordinator.setURL("https://example.com")
+        coordinator.presentCurlPreview()
+        await waitUntil { coordinator.state.curlPreviewState != nil }
+
+        XCTAssertFalse(coordinator.canUseRequestNavigationShortcuts)
+        coordinator.dismissCurlPreview()
+
+        XCTAssertNil(coordinator.state.curlPreviewState)
+        XCTAssertTrue(coordinator.canUseRequestNavigationShortcuts)
+    }
+
     func testInvalidPostResponseScriptBlocksHTTPRequest() async {
         let executor = StubRequestExecutor(mode: .pending)
         let coordinator = SessionCoordinator(
@@ -1099,6 +1195,66 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.listVariablesForCurrentContext().first(where: { $0.name == "token" })?.value, "next")
         XCTAssertEqual(coordinator.state.postResponseScriptState.changedVariableCount, 1)
         XCTAssertTrue(coordinator.state.postResponseScriptState.logs.first?.text.contains("saved next") == true)
+    }
+
+    func testGeneratedCurlUsesVariableValueCommittedByPostResponseScript() async {
+        let executor = StubRequestExecutor(mode: .pending)
+        let coordinator = SessionCoordinator(
+            requestExecutor: executor,
+            responseFormatter: StubResponseFormatter()
+        )
+        XCTAssertNotNil(coordinator.createVariable(name: "token", value: "before", scope: .global))
+        XCTAssertNotNil(
+            coordinator.createVariable(
+                name: "authorization",
+                value: "Bearer {{token}}",
+                scope: .global
+            )
+        )
+        coordinator.setURL("https://example.com/token")
+        coordinator.addHeader()
+        guard let header = coordinator.state.workspaceRequest.headers.last else {
+            return XCTFail("Expected header")
+        }
+        coordinator.updateHeader(
+            id: header.id,
+            name: "Authorization",
+            value: "{{authorization}}",
+            isEnabled: true
+        )
+        coordinator.setPostResponseScriptEnabled(true)
+        coordinator.setPostResponseScriptSource(
+            #"curly.variables.global.set("token", curly.response.json().token);"#
+        )
+
+        coordinator.runCurrentRequest()
+        await waitUntil { await executor.invocationCount == 1 }
+        let request = await executor.invocations[0]
+        XCTAssertEqual(request.headers.first?.value, "Bearer before")
+        await executor.resumeSuccess(ExecutedResponse(
+            request: request,
+            statusCode: 200,
+            headers: [ResponseHeader(name: "Content-Type", value: "application/json")],
+            bodyData: Data(#"{"token":"after"}"#.utf8),
+            mimeType: "application/json",
+            duration: 0.01,
+            timestamp: Date()
+        ))
+        await waitUntil { coordinator.state.postResponseScriptState.status == .passed }
+
+        coordinator.presentCurlPreview()
+        await waitUntil {
+            if case .command = coordinator.state.curlPreviewState?.content {
+                return true
+            }
+            return false
+        }
+        guard case .command(let command) = coordinator.state.curlPreviewState?.content else {
+            return XCTFail("Expected generated command")
+        }
+        XCTAssertTrue(command.contains("'Authorization: Bearer after'"))
+        XCTAssertFalse(command.contains("Bearer before"))
+        XCTAssertFalse(command.contains("{{"))
     }
 
     func testScriptVariableWriteMarksResponseStaleWhenItChangesRequestResolution() async {
@@ -1561,8 +1717,8 @@ private actor StubRequestExecutor: RequestExecuting {
         self.mode = mode
     }
 
-    func execute(_ request: Request) async throws -> ExecutedResponse {
-        invocations.append(request)
+    func execute(_ request: PreparedHTTPRequest) async throws -> ExecutedResponse {
+        invocations.append(request.sourceRequest)
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
         }

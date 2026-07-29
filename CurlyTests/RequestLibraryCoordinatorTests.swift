@@ -791,8 +791,8 @@ private actor CancellationTrackingRequestExecutor: RequestExecuting {
 
     var isWaiting: Bool { continuation != nil }
 
-    func execute(_ request: Request) async throws -> ExecutedResponse {
-        self.request = request
+    func execute(_ request: PreparedHTTPRequest) async throws -> ExecutedResponse {
+        self.request = request.sourceRequest
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation

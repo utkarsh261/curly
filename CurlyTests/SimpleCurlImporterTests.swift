@@ -141,11 +141,34 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(request.body, .text("{\"ok\":true}"))
     }
 
-    func testLocationImportsWithWarning() throws {
+    func testLocationImportsWithoutWarningBecauseExecutionFollowsRedirects() throws {
         let result = try importer.parse("curl --location https://example.com")
 
         XCTAssertEqual(result.request.urlString, "https://example.com")
-        XCTAssertEqual(result.warnings, ["Redirect-following from `--location` is not represented yet."])
+        XCTAssertEqual(result.warnings, [])
+    }
+
+    func testDataRawTreatsLeadingAtSignAsLiteralBody() throws {
+        let result = try importer.parse("curl --data-raw '@literal' https://example.com")
+
+        XCTAssertEqual(result.request.body, .text("@literal"))
+        XCTAssertEqual(result.warnings, [])
+    }
+
+    func testHeaderSuppressionDoesNotBecomeAStoredHeaderOrImplicitContentType() throws {
+        let result = try importer.parse(
+            "curl --header 'Content-Type:' --data-raw 'payload' https://example.com"
+        )
+
+        XCTAssertEqual(result.request.headers, [])
+        XCTAssertEqual(result.request.body, .text("payload"))
+    }
+
+    func testSemicolonHeaderSyntaxImportsAnExplicitEmptyHeader() throws {
+        let result = try importer.parse("curl --header 'X-Empty;' https://example.com")
+
+        XCTAssertEqual(result.request.headers.map(\.name), ["X-Empty"])
+        XCTAssertEqual(result.request.headers.map(\.value), [""])
     }
 
     func testCompressedDoesNotWarn() throws {
@@ -167,10 +190,7 @@ final class SimpleCurlImporterTests: XCTestCase {
     func testBundledInsecureFlagDisablesCertificateVerification() throws {
         let locationResult = try importer.parse("curl -kL https://example.com")
         XCTAssertEqual(locationResult.request.tlsCertificateVerification, .disabled)
-        XCTAssertEqual(
-            locationResult.warnings,
-            ["Redirect-following from `--location` is not represented yet."]
-        )
+        XCTAssertEqual(locationResult.warnings, [])
 
         let verboseResult = try importer.parse("curl -vk https://example.com")
         XCTAssertEqual(verboseResult.request.tlsCertificateVerification, .disabled)

@@ -21,13 +21,17 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private let curlImporter: CurlImporting
+    private let requestPreparer: HTTPRequestPreparing
+    private let curlRenderer: CurlCommandRendering
     private let requestExecutor: RequestExecuting
     private let responseFormatter: ResponseFormatting
     private let scriptRunner: PostResponseScriptRunning
     private let requestLibrary: RequestLibraryDependencies?
     private var currentRunTask: Task<Void, Never>?
+    private var curlPreviewTask: Task<Void, Never>?
     private var scriptValidationTask: Task<Void, Never>?
     private var activeRunID: UUID?
+    private var activePreparedRequest: PreparedHTTPRequest?
     private var savedRequestsByID: [UUID: SavedRequest] = [:]
     private var draftsByRequestID: [UUID: RequestDraft] = [:]
     private var summariesByRequestID: [UUID: ExecutionSummary] = [:]
@@ -65,7 +69,9 @@ final class SessionCoordinator: ObservableObject {
     }
 
     var canUseRequestNavigationShortcuts: Bool {
-        !state.isVariablesModalPresented && state.replaceConfirmationState == nil
+        !state.isVariablesModalPresented &&
+        state.curlPreviewState == nil &&
+        state.replaceConfirmationState == nil
     }
 
     var canUseLastVisitedRequestShortcut: Bool {
@@ -75,6 +81,8 @@ final class SessionCoordinator: ObservableObject {
     init(
         initialState: SessionState = .initial,
         curlImporter: CurlImporting = SimpleCurlImporter(),
+        requestPreparer: HTTPRequestPreparing = DefaultHTTPRequestPreparer(),
+        curlRenderer: CurlCommandRendering = DefaultCurlCommandRenderer(),
         requestExecutor: RequestExecuting = URLSessionRequestExecutor(),
         responseFormatter: ResponseFormatting = DefaultResponseFormatter(),
         scriptRunner: PostResponseScriptRunning = QuickJSPostResponseScriptRunner(),
@@ -87,6 +95,8 @@ final class SessionCoordinator: ObservableObject {
         self.globalPostResponseScriptState = initialState.postResponseScriptState
         self.globalLastExecutedRequestID = initialState.selectedSavedRequestID
         self.curlImporter = curlImporter
+        self.requestPreparer = requestPreparer
+        self.curlRenderer = curlRenderer
         self.requestExecutor = requestExecutor
         self.responseFormatter = responseFormatter
         self.scriptRunner = scriptRunner
@@ -99,6 +109,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func newWorkspace() {
+        guard state.curlPreviewState == nil else { return }
         if requestLibrary != nil {
             createOrFocusHiddenNewDraft()
             return
@@ -121,6 +132,7 @@ final class SessionCoordinator: ObservableObject {
     func setWindowVisible(_ isVisible: Bool) {
         state.isWindowVisible = isVisible
         if !isVisible {
+            dismissCurlPreview()
             persistSelectionState()
         }
     }
@@ -300,7 +312,11 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private static func looksLikeCurlCommand(_ text: String) -> Bool {
-        text == "curl" || text.hasPrefix("curl ") || text.hasPrefix("curl\t") || text.hasPrefix("curl\n")
+        text == "curl" ||
+        text.hasPrefix("curl ") ||
+        text.hasPrefix("curl\t") ||
+        text.hasPrefix("curl\n") ||
+        text.hasPrefix("printf '%b' ")
     }
 
     func confirmWorkspaceReplacement() {
@@ -316,6 +332,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func runCurrentRequest() {
+        guard state.curlPreviewState == nil else { return }
         let result = resolveCurrentRequestForRun()
         guard let resolvedRequest = result.resolvedRequest else {
             recordPreflightFailure(result.errorMessage ?? "The request is not runnable yet.")
@@ -333,6 +350,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func rerunLastRequest() {
+        guard state.curlPreviewState == nil else { return }
         guard let requestID = globalLastExecutedRequestID else {
             guard let request = globalLastExecutedRequest?.request else { return }
             startExecution(
@@ -348,11 +366,63 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func presentVariablesModal() {
+        dismissCurlPreview()
         state.isVariablesModalPresented = true
     }
 
     func dismissVariablesModal() {
         state.isVariablesModalPresented = false
+    }
+
+    func presentCurlPreview() {
+        state.isVariablesModalPresented = false
+        curlPreviewTask?.cancel()
+
+        let previewID = UUID()
+        let preparedRequest: PreparedHTTPRequest
+        if state.executionState == .running, let activePreparedRequest {
+            preparedRequest = activePreparedRequest
+        } else {
+            let resolution = resolveCurrentRequestForRun()
+            guard let resolvedRequest = resolution.resolvedRequest else {
+                state.curlPreviewState = CurlPreviewState(
+                    id: previewID,
+                    content: .error(resolution.errorMessage ?? "The request is not runnable yet.")
+                )
+                return
+            }
+            do {
+                preparedRequest = try requestPreparer.prepare(resolvedRequest)
+            } catch {
+                state.curlPreviewState = CurlPreviewState(
+                    id: previewID,
+                    content: .error(error.localizedDescription)
+                )
+                return
+            }
+        }
+
+        state.curlPreviewState = CurlPreviewState(id: previewID, content: .loading)
+        curlPreviewTask = Task { [curlRenderer] in
+            let command = await Task.detached(priority: .userInitiated) {
+                curlRenderer.render(preparedRequest)
+            }.value
+            guard !Task.isCancelled,
+                  self.state.curlPreviewState?.id == previewID else {
+                return
+            }
+            self.state.curlPreviewState = CurlPreviewState(
+                id: previewID,
+                content: .command(command)
+            )
+            self.curlPreviewTask = nil
+        }
+    }
+
+    func dismissCurlPreview() {
+        curlPreviewTask?.cancel()
+        curlPreviewTask = nil
+        state.curlPreviewState = nil
     }
 
     func listVariablesForCurrentContext() -> [Variable] {
@@ -714,6 +784,15 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
+        let preparedRequest: PreparedHTTPRequest
+        do {
+            preparedRequest = try requestPreparer.prepare(request)
+        } catch {
+            recordPreflightFailure(error.localizedDescription)
+            return
+        }
+        activePreparedRequest = preparedRequest
+
         let runID = UUID()
         activeRunID = runID
         scriptValidationTask?.cancel()
@@ -749,7 +828,7 @@ final class SessionCoordinator: ObservableObject {
             self.promoteValidatedExecution(request: request, requestID: runningRequestID)
 
             do {
-                let executedResponse = try await requestExecutor.execute(request)
+                let executedResponse = try await requestExecutor.execute(preparedRequest)
                 guard !Task.isCancelled, self.activeRunID == runID else { return }
                 let formattedResponse = await responseFormatter.format(executedResponse)
                 guard !Task.isCancelled, self.activeRunID == runID else { return }
@@ -1045,6 +1124,7 @@ final class SessionCoordinator: ObservableObject {
         guard activeRunID == runID else { return }
         activeRunID = nil
         currentRunTask = nil
+        activePreparedRequest = nil
     }
 
     private func finishCancelledRun(runID: UUID) {
@@ -1066,6 +1146,7 @@ final class SessionCoordinator: ObservableObject {
         activeRunID = nil
         currentRunTask?.cancel()
         currentRunTask = nil
+        activePreparedRequest = nil
         guard wasRunning else { return }
         if state.executionState == .running {
             state.executionState = state.visibleResponseState == nil ? .idle : .succeeded
