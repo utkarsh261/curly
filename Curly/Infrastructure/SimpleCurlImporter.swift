@@ -106,6 +106,7 @@ private struct CurlCommand {
     var suppressedHeaderNames: Set<String> = []
     var bodyParts: [String] = []
     var usesDataBody = false
+    var usesJSONBody = false
     var disablesTLSCertificateVerification = false
     var warnings: [String] = []
 
@@ -117,14 +118,11 @@ private struct CurlCommand {
     }
 
     mutating func appendHeader(name: String, value: String) {
-        suppressedHeaderNames.remove(name.lowercased())
         headers.append(Header(name: name, value: value, isEnabled: true))
     }
 
     mutating func suppressHeader(name: String) {
-        let normalizedName = name.lowercased()
-        headers.removeAll { $0.name.lowercased() == normalizedName }
-        suppressedHeaderNames.insert(normalizedName)
+        suppressedHeaderNames.insert(name.lowercased())
     }
 }
 
@@ -330,12 +328,7 @@ private enum CurlOptionBehavior {
                 command.warnings.append("File-backed request bodies are not represented yet.")
                 return
             }
-            if !command.headers.contains(where: { $0.name.caseInsensitiveCompare("Content-Type") == .orderedSame }) {
-                command.appendHeader(name: "Content-Type", value: "application/json")
-            }
-            if !command.headers.contains(where: { $0.name.caseInsensitiveCompare("Accept") == .orderedSame }) {
-                command.appendHeader(name: "Accept", value: "application/json")
-            }
+            command.usesJSONBody = true
             command.bodyParts.append(value)
 
         case .url:
@@ -425,7 +418,16 @@ private struct CurlRequestMapper {
 
         let body = command.bodyParts.isEmpty ? nil : command.bodyParts.joined(separator: "&")
         var headers = command.headers
-        if body != nil,
+        if command.usesJSONBody {
+            if !headers.contains(where: { $0.name.caseInsensitiveCompare("Content-Type") == .orderedSame }),
+               !command.suppressedHeaderNames.contains("content-type") {
+                headers.append(Header(name: "Content-Type", value: "application/json"))
+            }
+            if !headers.contains(where: { $0.name.caseInsensitiveCompare("Accept") == .orderedSame }),
+               !command.suppressedHeaderNames.contains("accept") {
+                headers.append(Header(name: "Accept", value: "application/json"))
+            }
+        } else if body != nil,
            command.usesDataBody,
            !headers.contains(where: { $0.name.caseInsensitiveCompare("Content-Type") == .orderedSame }),
            !command.suppressedHeaderNames.contains("content-type") {

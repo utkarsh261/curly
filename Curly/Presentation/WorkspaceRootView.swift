@@ -28,6 +28,8 @@ struct WorkspaceRootView: View {
                 responsePane
                     .frame(minWidth: 420, idealWidth: 680)
             }
+            .disabled(isWorkspaceModalPresented)
+            .accessibilityHidden(isWorkspaceModalPresented)
 
             if coordinator.state.isVariablesModalPresented {
                 variablesModalOverlay
@@ -50,6 +52,7 @@ struct WorkspaceRootView: View {
                     Image(systemName: "sidebar.left")
                 }
                 .help(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
+                .disabled(isWorkspaceModalPresented)
                 .accessibilityLabel(coordinator.state.isLibraryCollapsed ? "Show Sidebar" : "Hide Sidebar")
                 .accessibilityIdentifier("toggle-library-button")
             }
@@ -95,6 +98,10 @@ struct WorkspaceRootView: View {
                 }
             }
         }
+    }
+
+    private var isWorkspaceModalPresented: Bool {
+        coordinator.state.isVariablesModalPresented || coordinator.state.curlPreviewState != nil
     }
 
     private var workspaceNameBinding: Binding<String> {
@@ -207,6 +214,7 @@ struct WorkspaceRootView: View {
             }
         }
         .accessibilityIdentifier("variables-modal-overlay")
+        .accessibilityAddTraits(.isModal)
     }
 
     private var generatedCurlModalOverlay: some View {
@@ -235,6 +243,7 @@ struct WorkspaceRootView: View {
                 }
             }
         }
+        .accessibilityAddTraits(.isModal)
     }
 
     private func dismissVariablesModalSavingEdits() {

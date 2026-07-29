@@ -134,6 +134,8 @@ final class URLBarImportUITests: XCTestCase {
         XCTAssertTrue(error.waitForExistence(timeout: 3))
         XCTAssertTrue(text(of: error).contains("Define missing"))
         XCTAssertFalse(app.buttons["copy-generated-curl-button"].firstMatch.exists)
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(urlField.waitForExistence(timeout: 2))
         XCTAssertEqual(urlField.value as? String, "https://{{missing}}/users")
     }
 

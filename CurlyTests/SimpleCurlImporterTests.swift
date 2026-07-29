@@ -164,6 +164,33 @@ final class SimpleCurlImporterTests: XCTestCase {
         XCTAssertEqual(result.request.body, .text("payload"))
     }
 
+    func testHeaderSuppressionDoesNotDeleteAnEarlierExplicitHeader() throws {
+        let result = try importer.parse(
+            """
+            curl --header 'Content-Type: explicit/type' \
+              --header 'Content-Type:' \
+              --data-raw 'payload' \
+              https://example.com
+            """
+        )
+
+        XCTAssertEqual(result.request.headers.map(\.name), ["Content-Type"])
+        XCTAssertEqual(result.request.headers.map(\.value), ["explicit/type"])
+    }
+
+    func testHeaderSuppressionPreventsJSONImplicitHeadersRegardlessOfOptionOrder() throws {
+        for command in [
+            "curl --header 'Content-Type:' --header 'Accept:' --json '{}' https://example.com",
+            "curl --json '{}' --header 'Content-Type:' --header 'Accept:' https://example.com"
+        ] {
+            let result = try importer.parse(command)
+
+            XCTAssertEqual(result.request.headers, [], command)
+            XCTAssertEqual(result.request.body, .text("{}"), command)
+            XCTAssertEqual(result.request.method, .post, command)
+        }
+    }
+
     func testSemicolonHeaderSyntaxImportsAnExplicitEmptyHeader() throws {
         let result = try importer.parse("curl --header 'X-Empty;' https://example.com")
 

@@ -57,6 +57,31 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/b-draft")
     }
 
+    func testSwitchingRequestsDismissesGeneratedCurlForDepartingRequest() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        coordinator.setURL("https://api.example.com/a")
+        let requestAID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.setURL("https://api.example.com/b")
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        XCTAssertNotEqual(requestAID, requestBID)
+
+        coordinator.presentCurlPreview()
+        await waitUntil {
+            if case .command = coordinator.state.curlPreviewState?.content {
+                return true
+            }
+            return false
+        }
+
+        coordinator.selectSavedRequest(id: requestAID)
+
+        XCTAssertEqual(coordinator.state.selectedSavedRequestID, requestAID)
+        XCTAssertNil(coordinator.state.curlPreviewState)
+    }
+
     func testLastVisitedRequestTogglesBetweenTheCurrentAndPreviousRequest() async throws {
         let coordinator = makeCoordinator()
         await waitUntil { coordinator.state.selectedRequestContext == .saved }

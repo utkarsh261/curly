@@ -49,6 +49,16 @@ struct DefaultHTTPRequestPreparer: HTTPRequestPreparing {
             guard !trimmedName.isEmpty else {
                 continue
             }
+            guard Self.isValidHeaderName(trimmedName) else {
+                throw ExecutionError.invalidRequest(
+                    "Header \(trimmedName) contains characters that are not valid in an HTTP header name."
+                )
+            }
+            guard Self.isValidHeaderValue(header.value) else {
+                throw ExecutionError.invalidRequest(
+                    "Header \(trimmedName) contains line breaks or other invalid control characters."
+                )
+            }
             effectiveHeadersByName[trimmedName.lowercased()] = PreparedHTTPHeader(
                 name: trimmedName,
                 value: header.value
@@ -90,6 +100,19 @@ struct DefaultHTTPRequestPreparer: HTTPRequestPreparing {
         )
     }
 
+    private static func isValidHeaderName(_ name: String) -> Bool {
+        let allowed = CharacterSet(
+            charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~"
+        )
+        return name.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    private static func isValidHeaderValue(_ value: String) -> Bool {
+        value.unicodeScalars.allSatisfy { scalar in
+            scalar.value == 0x09 || scalar.value >= 0x20 && scalar.value != 0x7F
+        }
+    }
+
     private func effectiveServerTrustPolicy(for request: Request) -> ServerTrustPolicy {
         if request.tlsCertificateVerification == .disabled {
             return .disabled
@@ -111,19 +134,30 @@ struct DefaultCurlCommandRenderer: CurlCommandRendering {
     func render(_ request: PreparedHTTPRequest) -> String {
         let containsNUL = request.bodyData?.contains(0) == true
         var options: [String] = []
+        let followsRedirects: Bool
 
-        if request.serverTrustPolicy != .systemDefault {
+        switch request.serverTrustPolicy {
+        case .systemDefault:
+            followsRedirects = true
+        case .disabled:
+            followsRedirects = true
+            options.append("--insecure")
+        case .disabledForLoopbackHosts:
+            // curl has no host-scoped equivalent of this policy. Keep the
+            // loopback request usable, but do not carry --insecure through
+            // redirects to an untrusted remote host.
+            followsRedirects = false
             options.append("--insecure")
         }
-        if let methodOption = methodOption(for: request) {
-            options.append(methodOption)
-        }
+        options.append(contentsOf: methodOptions(for: request))
         options.append("--url \(shellQuote(request.urlRequest.url?.absoluteString ?? request.sourceRequest.urlString))")
 
         let hasContentType = request.headers.contains {
             $0.name.caseInsensitiveCompare("Content-Type") == .orderedSame
         }
-        if request.bodyData != nil, !hasContentType {
+        let curlAddsMatchingFormContentType = request.sourceRequest.method == .post
+            && request.bodyData?.isEmpty == false
+        if request.bodyData != nil, !hasContentType, !curlAddsMatchingFormContentType {
             options.append("--header \(shellQuote("Content-Type:"))")
         }
         for header in request.headers {
@@ -142,7 +176,8 @@ struct DefaultCurlCommandRenderer: CurlCommandRendering {
             }
         }
 
-        let curlLines = ["curl --location"] + options.map { "  \($0)" }
+        let curlInvocation = followsRedirects ? "curl --location" : "curl"
+        let curlLines = [curlInvocation] + options.map { "  \($0)" }
         guard containsNUL, let bodyData = request.bodyData else {
             return continued(curlLines)
         }
@@ -150,22 +185,24 @@ struct DefaultCurlCommandRenderer: CurlCommandRendering {
         let escapedBytes = bodyData.map { String(format: "\\%03o", $0) }.joined()
         let pipelineLines = [
             "printf '%b' '\(escapedBytes)' |",
-            "  curl --location"
+            "  \(curlInvocation)"
         ] + options.map { "    \($0)" }
         return continued(pipelineLines)
     }
 
-    private func methodOption(for request: PreparedHTTPRequest) -> String? {
+    private func methodOptions(for request: PreparedHTTPRequest) -> [String] {
         let hasBody = request.bodyData != nil
         switch (request.sourceRequest.method, hasBody) {
         case (.get, false):
-            return nil
+            return []
         case (.head, false):
-            return "--head"
+            return ["--head"]
+        case (.head, true):
+            return ["--request HEAD", "--ignore-content-length"]
         case (.post, true):
-            return nil
+            return []
         default:
-            return "--request \(request.sourceRequest.method.rawValue)"
+            return ["--request \(request.sourceRequest.method.rawValue)"]
         }
     }
 
@@ -199,25 +236,40 @@ enum TLSVerificationPreferences {
 }
 
 final class URLSessionHTTPTransport: HTTPTransporting, @unchecked Sendable {
+    private let systemDefaultSession: URLSession
     private let disabledVerificationSession: URLSession
     private let loopbackVerificationSession: URLSession
 
     init() {
+        systemDefaultSession = URLSession(
+            configuration: Self.makeIsolatedConfiguration()
+        )
         disabledVerificationSession = URLSession(
-            configuration: .default,
+            configuration: Self.makeIsolatedConfiguration(),
             delegate: ServerTrustURLSessionDelegate(policy: .disabled),
             delegateQueue: nil
         )
         loopbackVerificationSession = URLSession(
-            configuration: .default,
+            configuration: Self.makeIsolatedConfiguration(),
             delegate: ServerTrustURLSessionDelegate(policy: .disabledForLoopbackHosts),
             delegateQueue: nil
         )
     }
 
     deinit {
+        systemDefaultSession.invalidateAndCancel()
         disabledVerificationSession.invalidateAndCancel()
         loopbackVerificationSession.invalidateAndCancel()
+    }
+
+    static func makeIsolatedConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.httpShouldSetCookies = false
+        configuration.httpCookieStorage = nil
+        configuration.urlCredentialStorage = nil
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return configuration
     }
 
     func send(
@@ -229,7 +281,7 @@ final class URLSessionHTTPTransport: HTTPTransporting, @unchecked Sendable {
 
         switch serverTrustPolicy {
         case .systemDefault:
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await systemDefaultSession.data(for: request)
         case .disabled:
             (data, response) = try await disabledVerificationSession.data(for: request)
         case .disabledForLoopbackHosts:

@@ -86,9 +86,29 @@ final class RequestExecutorTests: XCTestCase {
         XCTAssertEqual(
             renderer.render(get),
             """
-            curl --location \\
+            curl \\
               --insecure \\
               --url 'https://localhost:9443/json'
+            """
+        )
+
+        let explicitlyInsecure = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .get,
+                urlString: "https://example.com",
+                headers: [],
+                body: .none,
+                tlsCertificateVerification: .disabled
+            )
+        )
+        XCTAssertEqual(
+            renderer.render(explicitlyInsecure),
+            """
+            curl --location \\
+              --insecure \\
+              --url 'https://example.com'
             """
         )
 
@@ -119,6 +139,122 @@ final class RequestExecutorTests: XCTestCase {
         )
     }
 
+    func testNonEmptyPostWithoutExplicitContentTypeKeepsCurlAndURLSessionDefaultsAligned() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .post,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("payload")
+            )
+        )
+
+        let command = DefaultCurlCommandRenderer().render(prepared)
+
+        XCTAssertFalse(command.contains("--header 'Content-Type:'"))
+        XCTAssertTrue(command.contains("--data-raw 'payload'"))
+    }
+
+    func testNonEmptyPostWithoutExplicitContentTypeExecutesWithSameFormTypeInAppAndCurl() async throws {
+        let request = Request(
+            method: .post,
+            urlString: "http://localhost:9999/post",
+            headers: [],
+            body: .text("name=curly")
+        )
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(request)
+
+        let appResponse = try await URLSessionRequestExecutor().execute(prepared)
+        let appBody = String(decoding: appResponse.bodyData, as: UTF8.self)
+        let curlResult = try executeShellCommand(
+            DefaultCurlCommandRenderer().render(prepared)
+        )
+        let appJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: appResponse.bodyData) as? [String: Any]
+        )
+        let curlJSON = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(curlResult.standardOutput.utf8)) as? [String: Any]
+        )
+        let appHeaders = try XCTUnwrap(appJSON["headers"] as? [String: String])
+        let curlHeaders = try XCTUnwrap(curlJSON["headers"] as? [String: String])
+
+        XCTAssertEqual(appResponse.statusCode, 200)
+        XCTAssertEqual(curlResult.status, 0, curlResult.standardError)
+        XCTAssertEqual(appHeaders["Content-Type"], "application/x-www-form-urlencoded", appBody)
+        XCTAssertEqual(curlHeaders["Content-Type"], "application/x-www-form-urlencoded")
+    }
+
+    func testEmptyPostStillSuppressesCurlImplicitContentType() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .post,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("")
+            )
+        )
+
+        XCTAssertTrue(
+            DefaultCurlCommandRenderer().render(prepared)
+                .contains("--header 'Content-Type:'")
+        )
+    }
+
+    func testHeadWithBodyUsesCurlHeadResponseHandlingWithoutChangingTheBodyToAQuery() throws {
+        let prepared = try DefaultHTTPRequestPreparer(
+            allowsInsecureLoopbackTLS: { false }
+        ).prepare(
+            Request(
+                method: .head,
+                urlString: "https://example.com",
+                headers: [],
+                body: .text("payload")
+            )
+        )
+
+        let command = DefaultCurlCommandRenderer().render(prepared)
+
+        XCTAssertTrue(command.contains("--request HEAD"))
+        XCTAssertTrue(command.contains("--ignore-content-length"))
+        XCTAssertTrue(command.contains("--data-raw 'payload'"))
+        XCTAssertFalse(command.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "--head \\" })
+    }
+
+    func testPreparationRejectsHeaderValuesContainingLineBreaks() {
+        let request = Request(
+            method: .get,
+            urlString: "https://example.com",
+            headers: [Header(name: "X-Test", value: "one\r\nX-Injected: two")],
+            body: .none
+        )
+
+        XCTAssertThrowsError(
+            try DefaultHTTPRequestPreparer(
+                allowsInsecureLoopbackTLS: { false }
+            ).prepare(request)
+        ) { error in
+            guard case .invalidRequest(let message) = error as? ExecutionError else {
+                return XCTFail("Expected invalid request, got \(error)")
+            }
+            XCTAssertTrue(message.contains("X-Test"))
+            XCTAssertTrue(message.contains("line breaks"))
+        }
+    }
+
+    func testTransportConfigurationDoesNotUseAmbientCookiesOrCredentials() {
+        let configuration = URLSessionHTTPTransport.makeIsolatedConfiguration()
+
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCredentialStorage)
+    }
+
     func testRendererDistinguishesExplicitEmptyHeaderFromCurlHeaderSuppression() throws {
         let prepared = try DefaultHTTPRequestPreparer(allowsInsecureLoopbackTLS: { false }).prepare(
             Request(
@@ -134,7 +270,6 @@ final class RequestExecutorTests: XCTestCase {
             """
             curl --location \\
               --url 'https://example.com' \\
-              --header 'Content-Type:' \\
               --header 'X-Empty;' \\
               --data-raw 'payload'
             """

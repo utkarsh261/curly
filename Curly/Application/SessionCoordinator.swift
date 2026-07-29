@@ -1700,6 +1700,7 @@ final class SessionCoordinator: ObservableObject {
             return
         }
 
+        dismissCurlPreview()
         let departingRequestID = selectedContext == .saved ? selectedSavedRequestID : nil
         cancelActiveRun()
         cacheCurrentResponseState()
@@ -1955,6 +1956,9 @@ final class SessionCoordinator: ObservableObject {
     }
 
     var hudCanRerun: Bool {
-        globalExecutionState != .running && currentRunTask == nil && globalLastExecutedRequest != nil
+        state.curlPreviewState == nil &&
+        globalExecutionState != .running &&
+        currentRunTask == nil &&
+        globalLastExecutedRequest != nil
     }
 }
