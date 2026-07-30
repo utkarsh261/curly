@@ -127,6 +127,12 @@ final class RequestValidationTests: XCTestCase {
             ).first
         )
         XCTAssertEqual(resolved.range, NSRange(location: 0, length: 17))
+        guard case .resolved(let name, let value) = resolved.content else {
+            XCTFail("Expected a lightweight resolved tooltip payload.")
+            return
+        }
+        XCTAssertEqual(name, "authorization")
+        XCTAssertEqual(value, "Bearer abc")
         XCTAssertEqual(resolved.text, "authorization resolves to:\nBearer abc")
 
         let missing = try XCTUnwrap(
@@ -160,9 +166,11 @@ final class RequestValidationTests: XCTestCase {
         let unbrokenValueSize = VariableTokenToolTipLayout.panelSize(
             for: "token resolves to " + String(repeating: "abcdef123456", count: 40)
         )
+        let oversizedText = (0..<40).map { "line-\($0)" }.joined(separator: "\n")
+        let visibleOversizedText = VariableTokenToolTipLayout.visibleText(for: oversizedText)
 
         let wrappingTextView = VariableTokenToolTipLayout.makeTextView(
-            for: "token resolves to " + String(repeating: "abcdef123456", count: 40)
+            for: visibleOversizedText
         )
         wrappingTextView.frame = NSRect(
             origin: .zero,
@@ -194,6 +202,12 @@ final class RequestValidationTests: XCTestCase {
         XCTAssertGreaterThan(wrappedSize.height, singleLineSize.height)
         XCTAssertGreaterThan(unbrokenValueSize.height, singleLineSize.height)
         XCTAssertGreaterThan(renderedLineCount, 1)
+        XCTAssertTrue(visibleOversizedText.hasSuffix(VariableTokenToolTipLayout.truncationNotice))
+        XCTAssertFalse(visibleOversizedText.contains("line-39"))
+        XCTAssertLessThanOrEqual(
+            ceil(layoutManager.usedRect(for: textContainer).height),
+            VariableTokenToolTipLayout.maximumTextHeight
+        )
         XCTAssertEqual(wrappingTextView.textContainer?.lineBreakMode, .byCharWrapping)
         XCTAssertFalse(wrappingTextView.isEditable)
         XCTAssertFalse(wrappingTextView.isSelectable)
@@ -216,16 +230,184 @@ final class RequestValidationTests: XCTestCase {
 
         textField.prepareFieldEditor(editor)
 
-        XCTAssertNil(editor.textStorage?.attribute(.variableTokenToolTip, at: 0, effectiveRange: nil))
+        XCTAssertNil(editor.variableToolTip(atCharacterIndex: 0))
         XCTAssertEqual(
-            editor.textStorage?.attribute(.variableTokenToolTip, at: 8, effectiveRange: nil) as? String,
+            editor.variableToolTip(atCharacterIndex: 8)?.text,
             "host resolves to:\napi.example.com"
         )
-        XCTAssertNil(editor.textStorage?.attribute(.variableTokenToolTip, at: 16, effectiveRange: nil))
+        XCTAssertNil(editor.variableToolTip(atCharacterIndex: 16))
         XCTAssertEqual(
-            editor.textStorage?.attribute(.variableTokenToolTip, at: 18, effectiveRange: nil) as? String,
+            editor.variableToolTip(atCharacterIndex: 18)?.text,
             "authorization resolves to:\nBearer abc"
         )
+    }
+
+    @MainActor
+    func testVariableToolTipGeometryRejectsBlankSpaceAndMiddleTruncation() throws {
+        let variables = [
+            Variable(name: "first", value: "one", scope: .global),
+            Variable(name: "second", value: "two", scope: .global)
+        ]
+        let text = "prefix-{{first}}-middle-{{second}}-suffix"
+        let items = VariableTemplateTokenToolTips.items(text: text, variables: variables)
+        XCTAssertEqual(items.count, 2)
+
+        let attributedText = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.monospacedSystemFont(
+                    ofSize: NSFont.systemFontSize,
+                    weight: .regular
+                )
+            ]
+        )
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byTruncatingMiddle
+        attributedText.addAttribute(
+            .paragraphStyle,
+            value: paragraphStyle,
+            range: NSRange(location: 0, length: attributedText.length)
+        )
+        let textStorage = NSTextStorage(attributedString: attributedText)
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(containerSize: NSSize(width: 150, height: 20))
+        textContainer.lineFragmentPadding = 0
+        textContainer.maximumNumberOfLines = 1
+        textContainer.lineBreakMode = .byTruncatingMiddle
+        layoutManager.addTextContainer(textContainer)
+        textStorage.addLayoutManager(layoutManager)
+        layoutManager.ensureLayout(for: textContainer)
+
+        for item in items {
+            XCTAssertNil(
+                VariableTokenHoverGeometry.visibleGlyphRect(
+                    for: item.range,
+                    layoutManager: layoutManager,
+                    textContainer: textContainer
+                ),
+                "A partially or fully elided variable must not claim the ellipsis hover region."
+            )
+        }
+
+        let visibleText = "{{first}}"
+        let visibleStorage = NSTextStorage(
+            attributedString: NSAttributedString(
+                string: visibleText,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(
+                        ofSize: NSFont.systemFontSize,
+                        weight: .regular
+                    )
+                ]
+            )
+        )
+        let visibleLayoutManager = NSLayoutManager()
+        let visibleContainer = NSTextContainer(containerSize: NSSize(width: 500, height: 20))
+        visibleContainer.lineFragmentPadding = 0
+        visibleLayoutManager.addTextContainer(visibleContainer)
+        visibleStorage.addLayoutManager(visibleLayoutManager)
+        visibleLayoutManager.ensureLayout(for: visibleContainer)
+        let tokenRect = try XCTUnwrap(
+            VariableTokenHoverGeometry.visibleGlyphRect(
+                for: NSRange(location: 0, length: (visibleText as NSString).length),
+                layoutManager: visibleLayoutManager,
+                textContainer: visibleContainer
+            )
+        )
+        XCTAssertTrue(
+            VariableTokenHoverGeometry.containsHorizontally(
+                NSPoint(x: tokenRect.midX, y: tokenRect.maxY + 4),
+                in: tokenRect
+            ),
+            "Single-line field padding must not prevent a horizontal token hit."
+        )
+        XCTAssertFalse(
+            VariableTokenHoverGeometry.containsHorizontally(
+                NSPoint(x: 490, y: tokenRect.midY),
+                in: tokenRect
+            )
+        )
+    }
+
+    @MainActor
+    func testActiveFieldEditorHitsTokenButRejectsTrailingBlankSpace() throws {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 500, height: 40),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        let editor = URLTokenFieldEditor(frame: NSRect(x: 0, y: 0, width: 500, height: 24))
+        editor.string = "{{token}}"
+        let textField = PasteAwareTextField()
+        textField.variables = [Variable(name: "token", value: "abc", scope: .global)]
+        textField.prepareFieldEditor(editor)
+        window.contentView = editor
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(editor)
+        defer {
+            window.orderOut(nil)
+        }
+
+        var hoveredItem: VariableTemplateTokenToolTip?
+        editor.onVariableTokenHover = { item, _ in
+            hoveredItem = item
+        }
+        let tokenRect = try XCTUnwrap(
+            VariableTokenHoverGeometry.visibleGlyphRect(
+                for: NSRange(location: 0, length: 9),
+                layoutManager: try XCTUnwrap(editor.layoutManager),
+                textContainer: try XCTUnwrap(editor.textContainer)
+            )
+        )
+        let tokenPoint = NSPoint(
+            x: editor.textContainerOrigin.x + tokenRect.midX,
+            y: editor.textContainerOrigin.y + tokenRect.midY
+        )
+        let tokenEvent = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: editor.convert(tokenPoint, to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 1,
+                clickCount: 0,
+                pressure: 0
+            )
+        )
+
+        editor.mouseMoved(with: tokenEvent)
+        XCTAssertEqual(hoveredItem?.text, "token resolves to:\nabc")
+
+        let blankPoint = NSPoint(x: editor.bounds.maxX - 5, y: tokenPoint.y)
+        let blankEvent = try XCTUnwrap(
+            NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: editor.convert(blankPoint, to: nil),
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: 2,
+                clickCount: 0,
+                pressure: 0
+            )
+        )
+        editor.mouseMoved(with: blankEvent)
+        XCTAssertNil(hoveredItem)
+    }
+
+    func testRepeatedVariableToolTipsKeepDistinctHoverIdentity() {
+        let items = VariableTemplateTokenToolTips.items(
+            text: "{{token}}/{{token}}",
+            variables: [Variable(name: "token", value: "abc", scope: .global)]
+        )
+
+        XCTAssertEqual(items.count, 2)
+        XCTAssertNotEqual(items[0], items[1])
+        XCTAssertEqual(items[0].text, items[1].text)
     }
 
     func testVariablesModalHeightFitsContentWithinCompactBounds() {

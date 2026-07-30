@@ -143,6 +143,21 @@ final class VariablesUITests: XCTestCase {
             in: urlField,
             app: app
         )
+        let tokenToolTip = app.staticTexts["token resolves to:\nabc"].firstMatch
+        urlField.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: 0.5)).hover()
+        XCTAssertFalse(
+            tokenToolTip.waitForExistence(timeout: 1.2),
+            "Blank space after a trailing variable must not inherit that variable's tooltip."
+        )
+        urlField.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: 35, dy: urlField.frame.height / 2))
+            .hover()
+        XCTAssertTrue(tokenToolTip.waitForExistence(timeout: 2))
+        app.typeKey(.tab, modifierFlags: [])
+        XCTAssertTrue(
+            waitUntil(timeout: 2) { !tokenToolTip.exists },
+            "The tooltip must close when its field loses focus."
+        )
 
         replaceText(
             "curl https://api.example.com/users -H 'Authorization: {{authorization}}'",
@@ -313,9 +328,18 @@ final class VariablesUITests: XCTestCase {
             .withOffset(CGVector(dx: xOffset, dy: element.frame.height / 2))
         hoverPoint.hover()
 
+        let toolTip = app.staticTexts[text].firstMatch
+        XCTAssertFalse(
+            toolTip.waitForExistence(timeout: 0.4),
+            "The variable tooltip should respect its hover delay."
+        )
         XCTAssertTrue(
-            app.staticTexts[text].firstMatch.waitForExistence(timeout: 4),
+            toolTip.waitForExistence(timeout: 4),
             "Expected hovering the variable token to show “\(text)”."
+        )
+        XCTAssertFalse(
+            toolTip.frame.intersects(element.frame),
+            "The variable tooltip should not cover the field being inspected."
         )
 
         app.windows.firstMatch
@@ -323,7 +347,7 @@ final class VariablesUITests: XCTestCase {
             .hover()
         XCTAssertTrue(
             waitUntil(timeout: 2) {
-                !app.staticTexts[text].firstMatch.exists
+                !toolTip.exists
             },
             "Expected the variable tooltip to disappear after moving away."
         )

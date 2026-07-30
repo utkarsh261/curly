@@ -45,13 +45,28 @@ enum VariableTemplateFieldAccessibility {
     }
 }
 
-struct VariableTemplateTokenToolTip: Equatable {
-    let range: NSRange
-    let text: String
+enum VariableTemplateTokenToolTipContent: Equatable {
+    case resolved(name: String, value: String)
+    case diagnostic(String)
+
+    var text: String {
+        switch self {
+        case .resolved(let name, let value):
+            return "\(name) resolves to:\n\(value)"
+        case .diagnostic(let message):
+            return message
+        }
+    }
 }
 
-extension NSAttributedString.Key {
-    static let variableTokenToolTip = NSAttributedString.Key("CurlyVariableTokenToolTip")
+struct VariableTemplateTokenToolTip: Equatable {
+    let range: NSRange
+    let status: VariableTokenStatus
+    let content: VariableTemplateTokenToolTipContent
+
+    var text: String {
+        content.text
+    }
 }
 
 enum VariableTemplateTokenToolTips {
@@ -60,19 +75,59 @@ enum VariableTemplateTokenToolTips {
             guard case .token(let token) = segment else {
                 return nil
             }
-            return VariableTemplateTokenToolTip(range: token.range, text: Self.text(for: token))
+            return VariableTemplateTokenToolTip(
+                range: token.range,
+                status: token.status,
+                content: Self.content(for: token)
+            )
         }
     }
 
-    static func text(for token: VariableToken) -> String {
+    private static func content(for token: VariableToken) -> VariableTemplateTokenToolTipContent {
         switch token.status {
         case .resolved:
-            return "\(token.name ?? token.rawText) resolves to:\n\(token.resolvedValue ?? "")"
+            return .resolved(
+                name: token.name ?? token.rawText,
+                value: token.resolvedValue ?? ""
+            )
         case .missing:
-            return token.diagnostic ?? "\(token.name ?? token.rawText) is missing"
+            return .diagnostic(token.diagnostic ?? "\(token.name ?? token.rawText) is missing")
         case .invalid:
-            return token.diagnostic ?? "\(token.rawText) has invalid syntax"
+            return .diagnostic(token.diagnostic ?? "\(token.rawText) has invalid syntax")
         }
+    }
+}
+
+enum VariableTokenHoverGeometry {
+    static func containsHorizontally(_ point: NSPoint, in rect: NSRect) -> Bool {
+        point.x >= rect.minX && point.x <= rect.maxX
+    }
+
+    static func visibleGlyphRect(
+        for characterRange: NSRange,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> NSRect? {
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: characterRange,
+            actualCharacterRange: nil
+        )
+        guard glyphRange.length > 0 else {
+            return nil
+        }
+        for glyphIndex in glyphRange.location..<NSMaxRange(glyphRange)
+        where layoutManager.propertyForGlyph(at: glyphIndex).contains(.null) {
+            return nil
+        }
+
+        let rect = layoutManager.boundingRect(
+            forGlyphRange: glyphRange,
+            in: textContainer
+        )
+        guard !rect.isNull, rect.width > 0, rect.height > 0 else {
+            return nil
+        }
+        return rect
     }
 }
 
@@ -85,6 +140,7 @@ enum VariableTokenToolTipLayout {
     static let maximumTextWidth: CGFloat = 420
     static let maximumTextHeight: CGFloat = 240
     static let minimumPanelHeight: CGFloat = 28
+    static let truncationNotice = "\n… value truncated"
     static let maximumPanelWidth = maximumTextWidth + (horizontalPadding * 2)
     static let font = NSFont.monospacedSystemFont(
         ofSize: NSFont.smallSystemFontSize,
@@ -92,6 +148,29 @@ enum VariableTokenToolTipLayout {
     )
 
     static func panelSize(for text: String) -> NSSize {
+        panelSizeForVisibleText(visibleText(for: text))
+    }
+
+    static func visibleText(for text: String) -> String {
+        guard measuredTextHeight(text, width: maximumTextWidth) > maximumTextHeight else {
+            return text
+        }
+
+        var lowerBound = 0
+        var upperBound = text.count
+        while lowerBound < upperBound {
+            let candidateLength = (lowerBound + upperBound + 1) / 2
+            let candidate = String(text.prefix(candidateLength)) + truncationNotice
+            if measuredTextHeight(candidate, width: maximumTextWidth) <= maximumTextHeight {
+                lowerBound = candidateLength
+            } else {
+                upperBound = candidateLength - 1
+            }
+        }
+        return String(text.prefix(lowerBound)) + truncationNotice
+    }
+
+    private static func panelSizeForVisibleText(_ text: String) -> NSSize {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = .byCharWrapping
         let attributes: [NSAttributedString.Key: Any] = [
@@ -103,17 +182,25 @@ enum VariableTokenToolTipLayout {
             .map { ceil(($0 as NSString).size(withAttributes: attributes).width) }
             .max() ?? minimumTextWidth
         let textWidth = min(max(naturalWidth, minimumTextWidth), maximumTextWidth)
-        let measuredText = (text as NSString).boundingRect(
-            with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: attributes
-        )
-        let textHeight = min(ceil(measuredText.height), maximumTextHeight)
+        let textHeight = min(ceil(measuredTextHeight(text, width: textWidth)), maximumTextHeight)
 
         return NSSize(
             width: textWidth + (horizontalPadding * 2),
             height: max(textHeight + (verticalPadding * 2), minimumPanelHeight)
         )
+    }
+
+    private static func measuredTextHeight(_ text: String, width: CGFloat) -> CGFloat {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineBreakMode = .byCharWrapping
+        return (text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [
+                .font: font,
+                .paragraphStyle: paragraphStyle
+            ]
+        ).height
     }
 
     static func makeTextView(for text: String) -> NSTextView {
@@ -319,6 +406,7 @@ struct URLInputField: NSViewRepresentable {
         func controlTextDidEndEditing(_ notification: Notification) {
             isFocused.wrappedValue = false
             if let textField = notification.object as? PasteAwareTextField {
+                textField.invalidateVariableToolTip()
                 textField.needsDisplay = true
             }
             activeTextField = nil
@@ -774,9 +862,9 @@ enum URLTokenEditingPolicy {
 }
 
 final class PasteAwareTextField: NSTextField {
-    private struct ToolTipRegion {
+    private struct ToolTipRegion: Equatable {
         let rect: NSRect
-        let text: String
+        let item: VariableTemplateTokenToolTip
     }
 
     var onWillFocus: (() -> Void)?
@@ -785,9 +873,9 @@ final class PasteAwareTextField: NSTextField {
     private var variableToolTipRegions: [ToolTipRegion] = []
     private var variableTrackingArea: NSTrackingArea?
     private var variableToolTipPanel: NSWindow?
-    private var displayedVariableToolTip: String?
+    private var displayedVariableToolTip: VariableTemplateTokenToolTip?
     private var pendingVariableToolTip: DispatchWorkItem?
-    private var pendingVariableToolTipText: String?
+    private var pendingVariableToolTipItem: VariableTemplateTokenToolTip?
     private var pendingVariableToolTipID: UUID?
     var baseAccessibilityLabel = "Variable template field" {
         didSet {
@@ -798,6 +886,7 @@ final class PasteAwareTextField: NSTextField {
     var variables: [Variable] = [] {
         didSet {
             guard oldValue != variables else { return }
+            hideVariableToolTip()
             if let editor = currentEditor() as? NSTextView {
                 editor.applyURLTokenAttributes(variables: variables)
             }
@@ -815,22 +904,33 @@ final class PasteAwareTextField: NSTextField {
     }
 
     func refreshVariableToolTips() {
-        variableToolTipRegions.removeAll()
-
-        let text = (currentEditor() as? NSTextView)?.string ?? stringValue
+        guard currentEditor() == nil else {
+            replaceVariableToolTipRegions(with: [])
+            return
+        }
+        let text = stringValue
         guard !text.isEmpty,
               bounds.width > 0,
               bounds.height > 0,
               let cell else {
+            replaceVariableToolTipRegions(with: [])
             return
         }
 
         let drawingRect = cell.titleRect(forBounds: bounds)
         guard drawingRect.width > 0, drawingRect.height > 0 else {
+            replaceVariableToolTipRegions(with: [])
             return
         }
 
         let attributedText = NSMutableAttributedString(string: text, attributes: Self.baseAttributes)
+        let items = VariableTemplateTokenToolTips.items(text: text, variables: variables)
+        for item in items {
+            attributedText.addAttributes(
+                Self.tokenAttributes(for: item.status),
+                range: item.range
+            )
+        }
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.lineBreakMode = lineBreakMode
         attributedText.addAttribute(
@@ -849,18 +949,18 @@ final class PasteAwareTextField: NSTextField {
         textStorage.addLayoutManager(layoutManager)
         layoutManager.ensureLayout(for: textContainer)
 
-        for item in VariableTemplateTokenToolTips.items(text: text, variables: variables) {
+        var newRegions: [ToolTipRegion] = []
+        for item in items {
             guard NSMaxRange(item.range) <= textStorage.length else {
                 continue
             }
-            let glyphRange = layoutManager.glyphRange(
-                forCharacterRange: item.range,
-                actualCharacterRange: nil
-            )
-            var tokenRect = layoutManager.boundingRect(
-                forGlyphRange: glyphRange,
-                in: textContainer
-            )
+            guard var tokenRect = VariableTokenHoverGeometry.visibleGlyphRect(
+                for: item.range,
+                layoutManager: layoutManager,
+                textContainer: textContainer
+            ) else {
+                continue
+            }
             tokenRect.origin.x += drawingRect.minX
             tokenRect.origin.y += drawingRect.minY
             tokenRect = tokenRect.intersection(drawingRect)
@@ -868,8 +968,16 @@ final class PasteAwareTextField: NSTextField {
                 continue
             }
 
-            variableToolTipRegions.append(ToolTipRegion(rect: tokenRect, text: item.text))
+            newRegions.append(ToolTipRegion(rect: tokenRect, item: item))
         }
+        replaceVariableToolTipRegions(with: newRegions)
+    }
+
+    private func replaceVariableToolTipRegions(with newRegions: [ToolTipRegion]) {
+        if newRegions != variableToolTipRegions {
+            hideVariableToolTip()
+        }
+        variableToolTipRegions = newRegions
     }
 
     override func layout() {
@@ -900,20 +1008,28 @@ final class PasteAwareTextField: NSTextField {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard currentEditor() == nil else {
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
         guard let region = variableToolTipRegions.first(where: { $0.rect.contains(point) }) else {
             hideVariableToolTip()
             return
         }
-        showVariableToolTip(region.text, anchoredTo: region.rect, in: self)
+        showVariableToolTip(region.item, anchoredTo: region.rect, in: self)
     }
 
     override func mouseEntered(with event: NSEvent) {
+        guard currentEditor() == nil else {
+            return
+        }
         mouseMoved(with: event)
     }
 
     override func mouseExited(with event: NSEvent) {
-        hideVariableToolTip()
+        if currentEditor() == nil {
+            hideVariableToolTip()
+        }
         super.mouseExited(with: event)
     }
 
@@ -943,6 +1059,7 @@ final class PasteAwareTextField: NSTextField {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        hideVariableToolTip()
         if currentEditor() == nil {
             beginEditingIfNeeded(selectAll: false)
         }
@@ -999,16 +1116,17 @@ final class PasteAwareTextField: NSTextField {
         editor.backgroundColor = surfaceRaisedNS
         editor.drawsBackground = true
         if let editor = editor as? URLTokenFieldEditor {
-            editor.onVariableTokenHover = { [weak self] text, screenPoint in
+            editor.onVariableTokenHover = { [weak self] item, screenPoint in
                 guard let self else { return }
-                if let text, let screenPoint {
-                    showVariableToolTip(text, anchoredAt: screenPoint)
+                if let item, let screenPoint {
+                    showVariableToolTip(item, anchoredAt: screenPoint)
                 } else {
                     hideVariableToolTip()
                 }
             }
             editor.onCommitAndMove = { [weak self] movesBackward in
                 guard let self else { return }
+                hideVariableToolTip()
                 onCommit?()
                 onEndFocus?()
                 if movesBackward {
@@ -1018,6 +1136,7 @@ final class PasteAwareTextField: NSTextField {
                 }
             }
             editor.onCommitAndEndEditing = { [weak self] in
+                self?.hideVariableToolTip()
                 self?.onCommit?()
                 self?.onEndFocus?()
                 self?.window?.makeFirstResponder(nil)
@@ -1027,17 +1146,24 @@ final class PasteAwareTextField: NSTextField {
         refreshVariableToolTips()
     }
 
-    private func showVariableToolTip(_ text: String, anchoredTo rect: NSRect, in view: NSView) {
+    private func showVariableToolTip(
+        _ item: VariableTemplateTokenToolTip,
+        anchoredTo rect: NSRect,
+        in view: NSView
+    ) {
         guard let window = view.window else { return }
-        let anchorInWindow = view.convert(NSPoint(x: rect.midX, y: rect.minY), to: nil)
-        showVariableToolTip(text, anchoredAt: window.convertPoint(toScreen: anchorInWindow))
+        let anchorInWindow = view.convert(NSPoint(x: rect.midX, y: rect.maxY), to: nil)
+        showVariableToolTip(item, anchoredAt: window.convertPoint(toScreen: anchorInWindow))
     }
 
-    private func showVariableToolTip(_ text: String, anchoredAt screenPoint: NSPoint) {
-        if displayedVariableToolTip == text, variableToolTipPanel?.isVisible == true {
+    private func showVariableToolTip(
+        _ item: VariableTemplateTokenToolTip,
+        anchoredAt screenPoint: NSPoint
+    ) {
+        if displayedVariableToolTip == item, variableToolTipPanel?.isVisible == true {
             return
         }
-        if pendingVariableToolTipText == text {
+        if pendingVariableToolTipItem == item {
             return
         }
         hideVariableToolTip()
@@ -1048,12 +1174,12 @@ final class PasteAwareTextField: NSTextField {
                 return
             }
             pendingVariableToolTip = nil
-            pendingVariableToolTipText = nil
+            pendingVariableToolTipItem = nil
             pendingVariableToolTipID = nil
-            presentVariableToolTip(text, anchoredAt: screenPoint)
+            presentVariableToolTip(item, anchoredAt: screenPoint)
         }
         pendingVariableToolTip = workItem
-        pendingVariableToolTipText = text
+        pendingVariableToolTipItem = item
         pendingVariableToolTipID = requestID
         DispatchQueue.main.asyncAfter(
             deadline: .now() + VariableTokenToolTipLayout.presentationDelay,
@@ -1061,7 +1187,11 @@ final class PasteAwareTextField: NSTextField {
         )
     }
 
-    private func presentVariableToolTip(_ text: String, anchoredAt screenPoint: NSPoint) {
+    private func presentVariableToolTip(
+        _ item: VariableTemplateTokenToolTip,
+        anchoredAt screenPoint: NSPoint
+    ) {
+        let text = VariableTokenToolTipLayout.visibleText(for: item.text)
         let textView = VariableTokenToolTipLayout.makeTextView(for: text)
         textView.identifier = NSUserInterfaceItemIdentifier("variable-token-tooltip")
         textView.setAccessibilityElement(true)
@@ -1113,18 +1243,19 @@ final class PasteAwareTextField: NSTextField {
             if origin.y < visibleFrame.minY + 4 {
                 origin.y = screenPoint.y + 6
             }
+            origin.y = min(origin.y, visibleFrame.maxY - panelSize.height - 4)
         }
         panel.setFrameOrigin(origin)
         window?.addChildWindow(panel, ordered: .above)
         panel.orderFront(nil)
         variableToolTipPanel = panel
-        displayedVariableToolTip = text
+        displayedVariableToolTip = item
     }
 
     private func hideVariableToolTip() {
         pendingVariableToolTip?.cancel()
         pendingVariableToolTip = nil
-        pendingVariableToolTipText = nil
+        pendingVariableToolTipItem = nil
         pendingVariableToolTipID = nil
         guard let panel = variableToolTipPanel else {
             displayedVariableToolTip = nil
@@ -1134,6 +1265,10 @@ final class PasteAwareTextField: NSTextField {
         panel.orderOut(nil)
         variableToolTipPanel = nil
         displayedVariableToolTip = nil
+    }
+
+    func invalidateVariableToolTip() {
+        hideVariableToolTip()
     }
 
     func applyTokenAttributes() {
@@ -1167,15 +1302,14 @@ private extension NSTextView {
         let selectedRangesBeforeStyling = selectedRanges
         let fullRange = NSRange(location: 0, length: (string as NSString).length)
         textStorage?.setAttributes(PasteAwareTextField.baseAttributes, range: fullRange)
-        for segment in VariableTemplateParser.parse(string, variables: variables) {
-            guard case .token(let token) = segment else {
-                continue
-            }
-            textStorage?.addAttributes(PasteAwareTextField.tokenAttributes(for: token.status), range: token.range)
-            textStorage?.addAttribute(
-                .variableTokenToolTip,
-                value: VariableTemplateTokenToolTips.text(for: token),
-                range: token.range
+        let items = VariableTemplateTokenToolTips.items(text: string, variables: variables)
+        if let editor = self as? URLTokenFieldEditor {
+            editor.updateVariableToolTips(items)
+        }
+        for item in items {
+            textStorage?.addAttributes(
+                PasteAwareTextField.tokenAttributes(for: item.status),
+                range: item.range
             )
         }
         typingAttributes = PasteAwareTextField.baseAttributes
@@ -1233,7 +1367,8 @@ private final class URLTokenTextFieldCell: NSTextFieldCell {
 final class URLTokenFieldEditor: NSTextView {
     var onCommitAndMove: ((Bool) -> Void)?
     var onCommitAndEndEditing: (() -> Void)?
-    var onVariableTokenHover: ((String?, NSPoint?) -> Void)?
+    var onVariableTokenHover: ((VariableTemplateTokenToolTip?, NSPoint?) -> Void)?
+    private var variableToolTips: [VariableTemplateTokenToolTip] = []
     private var variableTrackingArea: NSTrackingArea?
     nonisolated(unsafe) private var variableMouseMonitor: Any?
 
@@ -1279,6 +1414,18 @@ final class URLTokenFieldEditor: NSTextView {
         handleVariableHover(event)
     }
 
+    func updateVariableToolTips(_ items: [VariableTemplateTokenToolTip]) {
+        guard items != variableToolTips else {
+            return
+        }
+        variableToolTips = items
+        onVariableTokenHover?(nil, nil)
+    }
+
+    func variableToolTip(atCharacterIndex characterIndex: Int) -> VariableTemplateTokenToolTip? {
+        variableToolTips.first { NSLocationInRange(characterIndex, $0.range) }
+    }
+
     private func handleVariableHover(_ event: NSEvent) {
         guard event.window === window,
               window?.firstResponder === self,
@@ -1311,37 +1458,34 @@ final class URLTokenFieldEditor: NSTextView {
 
         let characterIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
         guard characterIndex < textStorage.length,
-              let text = textStorage.attribute(
-                .variableTokenToolTip,
-                at: characterIndex,
-                effectiveRange: nil
-              ) as? String else {
+              let item = variableToolTip(atCharacterIndex: characterIndex) else {
             onVariableTokenHover?(nil, nil)
             return
         }
 
-        var effectiveRange = NSRange()
-        _ = textStorage.attribute(
-            .variableTokenToolTip,
-            at: characterIndex,
-            effectiveRange: &effectiveRange
-        )
-        let tokenGlyphRange = layoutManager.glyphRange(
-            forCharacterRange: effectiveRange,
-            actualCharacterRange: nil
-        )
-        var tokenRect = layoutManager.boundingRect(
-            forGlyphRange: tokenGlyphRange,
-            in: textContainer
-        )
+        guard var tokenRect = VariableTokenHoverGeometry.visibleGlyphRect(
+            for: item.range,
+            layoutManager: layoutManager,
+            textContainer: textContainer
+        ) else {
+            onVariableTokenHover?(nil, nil)
+            return
+        }
+        guard VariableTokenHoverGeometry.containsHorizontally(
+            containerPoint,
+            in: tokenRect
+        ) else {
+            onVariableTokenHover?(nil, nil)
+            return
+        }
         tokenRect.origin.x += textContainerOrigin.x
         tokenRect.origin.y += textContainerOrigin.y
         guard let window else {
             onVariableTokenHover?(nil, nil)
             return
         }
-        let anchorInWindow = convert(NSPoint(x: tokenRect.midX, y: tokenRect.minY), to: nil)
-        onVariableTokenHover?(text, window.convertPoint(toScreen: anchorInWindow))
+        let anchorInWindow = convert(NSPoint(x: tokenRect.midX, y: tokenRect.maxY), to: nil)
+        onVariableTokenHover?(item, window.convertPoint(toScreen: anchorInWindow))
     }
 
     override func mouseEntered(with event: NSEvent) {
@@ -1365,6 +1509,7 @@ final class URLTokenFieldEditor: NSTextView {
         let dominantDelta = abs(deltaX) > 0.01 ? deltaX : deltaY
         guard abs(dominantDelta) > 0.01 else { return }
 
+        onVariableTokenHover?(nil, nil)
         let distance = dominantDelta * (hasPreciseDeltas ? 1 : 16)
         let maximumOriginX = max(0, bounds.width - visibleRect.width)
         let targetOriginX = min(max(visibleRect.minX - distance, 0), maximumOriginX)
