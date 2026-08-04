@@ -20,6 +20,24 @@ final class SessionCoordinator: ObservableObject {
         var postResponseScriptState: PostResponseScriptState
     }
 
+    private struct RequestEditorDisclosureState {
+        var headersExpanded: Bool
+        var bodyExpanded: Bool
+
+        init(_ expansion: RequestEditorExpansionState) {
+            headersExpanded = expansion.headersExpanded
+            bodyExpanded = expansion.bodyExpanded
+        }
+
+        var expansion: RequestEditorExpansionState {
+            RequestEditorExpansionState(
+                headersExpanded: headersExpanded,
+                bodyExpanded: bodyExpanded,
+                postResponseScriptExpanded: false
+            )
+        }
+    }
+
     private let curlImporter: CurlImporting
     private let requestPreparer: HTTPRequestPreparing
     private let curlRenderer: CurlCommandRendering
@@ -37,6 +55,7 @@ final class SessionCoordinator: ObservableObject {
     private var summariesByRequestID: [UUID: ExecutionSummary] = [:]
     private var variablesByID: [UUID: Variable] = [:]
     private var executionStatesByRequestID: [UUID: RequestExecutionState] = [:]
+    private var editorDisclosureStatesByRequestID: [UUID: RequestEditorDisclosureState] = [:]
     private var hiddenNewDraft: HiddenNewDraft?
     private var selectedContext: SelectionContext = .hiddenNewDraft
     private var selectedSavedRequestID: UUID?
@@ -120,7 +139,7 @@ final class SessionCoordinator: ObservableObject {
         state.workspaceName = "Untitled Request"
         state.requestAutomation = .none
         state.postResponseScriptState = .off
-        state.requestEditorExpansion = .allExpanded
+        state.requestEditorExpansion = .defaultState
         state.lastExecutedRequest = nil
         state.executionState = .idle
         state.visibleResponseState = nil
@@ -272,6 +291,7 @@ final class SessionCoordinator: ObservableObject {
 
     func toggleRequestEditorSection(_ section: RequestEditorSection) {
         state.requestEditorExpansion.toggle(section)
+        cacheCurrentRequestEditorExpansion()
     }
 
     func setResponseMode(_ mode: ResponseViewMode) {
@@ -623,6 +643,10 @@ final class SessionCoordinator: ObservableObject {
                 nameWasManuallyEdited: true,
                 automation: snapshot.automation
             )
+            let editorDisclosure = hiddenDraftID
+                .flatMap { editorDisclosureStatesByRequestID.removeValue(forKey: $0) }
+                ?? RequestEditorDisclosureState(state.requestEditorExpansion)
+            editorDisclosureStatesByRequestID[newSaved.id] = editorDisclosure
             savedRequestsByID[newSaved.id] = newSaved
             hiddenNewDraft = nil
             lastVisitedSavedRequestID = nil
@@ -674,6 +698,7 @@ final class SessionCoordinator: ObservableObject {
         draftsByRequestID[id] = nil
         summariesByRequestID[id] = nil
         executionStatesByRequestID[id] = nil
+        editorDisclosureStatesByRequestID[id] = nil
         if lastVisitedSavedRequestID == id || wasSelected {
             lastVisitedSavedRequestID = nil
         }
@@ -1236,7 +1261,8 @@ final class SessionCoordinator: ObservableObject {
 
     private func applyImportedRequest(_ request: Request) {
         state.workspaceRequest = request
-        state.requestEditorExpansion = .allExpanded
+        state.requestEditorExpansion = .defaultState
+        cacheCurrentRequestEditorExpansion()
         let currentName = state.workspaceName.trimmingCharacters(in: .whitespacesAndNewlines)
         if currentName.isEmpty || currentName == "New Request" || currentName == "Untitled Request" {
             state.workspaceName = generatedName(for: request)
@@ -1514,16 +1540,33 @@ final class SessionCoordinator: ObservableObject {
             state.workspaceRequest = snapshot.request
             state.workspaceName = snapshot.name
             state.requestAutomation = snapshot.automation
-            state.requestEditorExpansion = .allExpanded
+            state.requestEditorExpansion = editorDisclosureStatesByRequestID[selectedSavedRequestID]?.expansion
+                ?? .defaultState
             state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
         case .hiddenNewDraft:
             let snapshot = hiddenNewDraft?.snapshot ?? EditableRequestSnapshot(name: "Untitled Request", request: .empty)
             state.workspaceRequest = snapshot.request
             state.workspaceName = snapshot.name
             state.requestAutomation = snapshot.automation
-            state.requestEditorExpansion = .allExpanded
+            state.requestEditorExpansion = currentRequestEditorStateID()
+                .flatMap { editorDisclosureStatesByRequestID[$0]?.expansion }
+                ?? .defaultState
             state.postResponseScriptState = snapshot.automation.postResponseScript.isEnabled ? .ready : .off
         }
+    }
+
+    private func currentRequestEditorStateID() -> UUID? {
+        switch selectedContext {
+        case .saved:
+            return selectedSavedRequestID
+        case .hiddenNewDraft:
+            return hiddenNewDraft?.id
+        }
+    }
+
+    private func cacheCurrentRequestEditorExpansion() {
+        guard let requestID = currentRequestEditorStateID() else { return }
+        editorDisclosureStatesByRequestID[requestID] = RequestEditorDisclosureState(state.requestEditorExpansion)
     }
 
     private func persistSelectionState() {
@@ -1662,6 +1705,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     private func selectHiddenNewDraft(createIfMissing: Bool) {
+        cacheCurrentRequestEditorExpansion()
         selectedContext = .hiddenNewDraft
         selectedSavedRequestID = nil
         if hiddenNewDraft == nil && createIfMissing {
@@ -1704,6 +1748,7 @@ final class SessionCoordinator: ObservableObject {
         let departingRequestID = selectedContext == .saved ? selectedSavedRequestID : nil
         cancelActiveRun()
         cacheCurrentResponseState()
+        cacheCurrentRequestEditorExpansion()
 
         selectedContext = .saved
         selectedSavedRequestID = id

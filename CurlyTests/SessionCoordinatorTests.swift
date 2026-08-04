@@ -130,19 +130,15 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.isWindowVisible)
     }
 
-    func testRequestEditorStartsWithHeadersAndBodyExpanded() {
+    func testRequestEditorDefaultsToHeadersCollapsedAndBodyExpanded() {
         let coordinator = SessionCoordinator()
 
-        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
         XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
     }
 
     func testRequestEditorToggleKeepsSectionsIndependent() {
         let coordinator = SessionCoordinator()
-        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
-        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
-
-        coordinator.toggleRequestEditorSection(.headers)
         XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
         XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
 
@@ -150,8 +146,12 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
         XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
 
+        coordinator.toggleRequestEditorSection(.headers)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
         coordinator.toggleRequestEditorSection(.body)
-        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
         XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
     }
 
@@ -162,7 +162,14 @@ final class SessionCoordinatorTests: XCTestCase {
 
         coordinator.newWorkspace()
 
-        XCTAssertEqual(coordinator.state.requestEditorExpansion, .allExpanded)
+        XCTAssertEqual(
+            coordinator.state.requestEditorExpansion,
+            RequestEditorExpansionState(
+                headersExpanded: false,
+                bodyExpanded: true,
+                postResponseScriptExpanded: false
+            )
+        )
     }
 
     func testEmptyWorkspaceCurlPasteImportsImmediately() {
@@ -294,6 +301,15 @@ final class SessionCoordinatorTests: XCTestCase {
         )
         let coordinator = SessionCoordinator(initialState: initialState)
 
+        if !coordinator.state.requestEditorExpansion.headersExpanded {
+            coordinator.toggleRequestEditorSection(.headers)
+        }
+        if coordinator.state.requestEditorExpansion.bodyExpanded {
+            coordinator.toggleRequestEditorSection(.body)
+        }
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+
         coordinator.handleURLBarPaste("curl https://replacement.example.com -X POST")
         coordinator.confirmWorkspaceReplacement()
 
@@ -301,7 +317,14 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.method, .post)
         XCTAssertNil(coordinator.state.replaceConfirmationState)
         XCTAssertEqual(coordinator.state.visibleResponseState?.isStale, true)
-        XCTAssertEqual(coordinator.state.requestEditorExpansion, .allExpanded)
+        XCTAssertEqual(
+            coordinator.state.requestEditorExpansion,
+            RequestEditorExpansionState(
+                headersExpanded: false,
+                bodyExpanded: true,
+                postResponseScriptExpanded: false
+            )
+        )
     }
 
     func testConfirmLocationReplacementDoesNotApplyImportWarning() {

@@ -1293,8 +1293,8 @@ struct RequestEditorExpansionState: Equatable {
     var bodyExpanded: Bool
     var postResponseScriptExpanded: Bool
 
-    static let allExpanded = RequestEditorExpansionState(
-        headersExpanded: true,
+    static let defaultState = RequestEditorExpansionState(
+        headersExpanded: false,
         bodyExpanded: true,
         postResponseScriptExpanded: false
     )
@@ -1391,7 +1391,7 @@ struct SessionState: Equatable {
         inlineMessage: InlineMessage? = nil,
         inlineErrorMessage: String? = nil,
         isWindowVisible: Bool,
-        requestEditorExpansion: RequestEditorExpansionState = .allExpanded,
+        requestEditorExpansion: RequestEditorExpansionState = .defaultState,
         variables: [Variable] = [],
         isVariablesModalPresented: Bool = false,
         curlPreviewState: CurlPreviewState? = nil
@@ -1440,7 +1440,7 @@ struct SessionState: Equatable {
         visibleResponseState: nil,
         replaceConfirmationState: nil,
         isWindowVisible: true,
-        requestEditorExpansion: .allExpanded,
+        requestEditorExpansion: .defaultState,
         variables: [],
         isVariablesModalPresented: false,
         curlPreviewState: nil

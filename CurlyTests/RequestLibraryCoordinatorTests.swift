@@ -57,6 +57,69 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.state.workspaceRequest.urlString, "https://api.example.com/b-draft")
     }
 
+    func testSwitchingSavedRequestsRestoresIndependentRequestEditorExpansion() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        let requestAID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        XCTAssertEqual(
+            coordinator.state.requestEditorExpansion,
+            RequestEditorExpansionState(
+                headersExpanded: false,
+                bodyExpanded: true,
+                postResponseScriptExpanded: false
+            )
+        )
+
+        coordinator.toggleRequestEditorSection(.headers)
+        coordinator.toggleRequestEditorSection(.body)
+        coordinator.toggleRequestEditorSection(.postResponseScript)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.postResponseScriptExpanded)
+
+        coordinator.createOrFocusHiddenNewDraft()
+        let requestBID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        XCTAssertNotEqual(requestAID, requestBID)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.selectSavedRequest(id: requestAID)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+        XCTAssertFalse(
+            coordinator.state.requestEditorExpansion.postResponseScriptExpanded,
+            "Switching requests should keep the established behavior of collapsing the script section."
+        )
+
+        coordinator.selectSavedRequest(id: requestBID)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.postResponseScriptExpanded)
+    }
+
+    func testCurlImportResetsAndCachesRequestEditorDefaultsForCurrentRequest() async throws {
+        let coordinator = makeCoordinator()
+        await waitUntil { coordinator.state.selectedRequestContext == .saved }
+
+        coordinator.setURL("https://current.example.com")
+        let importedRequestID = try XCTUnwrap(coordinator.state.selectedSavedRequestID)
+        coordinator.toggleRequestEditorSection(.headers)
+        coordinator.toggleRequestEditorSection(.body)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.handleURLBarPaste("curl https://imported.example.com -X POST")
+        coordinator.confirmWorkspaceReplacement()
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+        coordinator.createOrFocusHiddenNewDraft()
+        coordinator.selectSavedRequest(id: importedRequestID)
+        XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+        XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+    }
+
     func testSwitchingRequestsDismissesGeneratedCurlForDepartingRequest() async throws {
         let coordinator = makeCoordinator()
         await waitUntil { coordinator.state.selectedRequestContext == .saved }
@@ -585,6 +648,11 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
             XCTAssertEqual(requestVariable.requestID, hiddenDraftID)
             XCTAssertNil(globalVariable.requestID)
 
+            coordinator.toggleRequestEditorSection(.headers)
+            coordinator.toggleRequestEditorSection(.body)
+            XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+            XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
+
             coordinator.updateWorkspaceName("Variable owner")
             coordinator.setURL("https://{{api_host}}/accounts/{{account_id}}")
             coordinator.saveCurrentRequest()
@@ -596,6 +664,15 @@ final class RequestLibraryCoordinatorTests: XCTestCase {
                 coordinator.listVariablesForCurrentContext().first { $0.id == requestVariable.id }
             )
             XCTAssertEqual(migrated.requestID, savedRequestID)
+
+            coordinator.createOrFocusHiddenNewDraft()
+            XCTAssertNotEqual(coordinator.state.selectedSavedRequestID, savedRequestID)
+            XCTAssertFalse(coordinator.state.requestEditorExpansion.headersExpanded)
+            XCTAssertTrue(coordinator.state.requestEditorExpansion.bodyExpanded)
+
+            coordinator.selectSavedRequest(id: savedRequestID)
+            XCTAssertTrue(coordinator.state.requestEditorExpansion.headersExpanded)
+            XCTAssertFalse(coordinator.state.requestEditorExpansion.bodyExpanded)
         }
 
         do {

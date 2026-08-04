@@ -50,6 +50,49 @@ final class SavedRequestsUITests: XCTestCase {
         })
     }
 
+    func testRequestEditorSectionsUseDefaultsAndRestorePerRequestStateWhenSwitching() {
+        let libraryFileURL = makeTemporaryLibraryFileURL()
+        let app = launchPersistentApp(libraryFileURL: libraryFileURL)
+        defer { app.terminate() }
+
+        let headersRow = app.buttons["request-accordion-headers"].firstMatch
+        let bodyRow = app.buttons["request-accordion-body"].firstMatch
+        let addHeaderButton = app.buttons["add-header-button"].firstMatch
+        let bodyEditor = app.textViews.firstMatch
+
+        XCTAssertTrue(headersRow.waitForExistence(timeout: 4))
+        XCTAssertTrue(bodyRow.waitForExistence(timeout: 2))
+        XCTAssertFalse(addHeaderButton.exists, "A new request should start with Headers collapsed.")
+        XCTAssertTrue(bodyEditor.exists, "A new request should start with Body expanded.")
+
+        createCurrentRequest(
+            name: "Request A",
+            url: "https://api.example.com/a",
+            in: app
+        )
+        headersRow.click()
+        bodyRow.click()
+        XCTAssertTrue(addHeaderButton.waitForExistence(timeout: 2))
+        XCTAssertFalse(bodyEditor.exists)
+
+        app.buttons["new-request-button"].firstMatch.click()
+        createCurrentRequest(
+            name: "Request B",
+            url: "https://api.example.com/b",
+            in: app
+        )
+        XCTAssertFalse(addHeaderButton.exists, "A newly created request must not inherit Request A's Headers state.")
+        XCTAssertTrue(bodyEditor.exists, "A newly created request must not inherit Request A's Body state.")
+
+        selectRequest(named: "Request A", in: app)
+        XCTAssertTrue(addHeaderButton.waitForExistence(timeout: 2), "Request A should restore Headers expanded.")
+        XCTAssertFalse(bodyEditor.exists, "Request A should restore Body collapsed.")
+
+        selectRequest(named: "Request B", in: app)
+        XCTAssertFalse(addHeaderButton.exists, "Request B should restore Headers collapsed.")
+        XCTAssertTrue(bodyEditor.exists, "Request B should restore Body expanded.")
+    }
+
     func testDraftPersistsAcrossRelaunchForSavedRequest() throws {
         let libraryFileURL = makeTemporaryLibraryFileURL()
 
